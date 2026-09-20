@@ -47,6 +47,11 @@ def run_autofix(request, auto_apply=True):
     for c in changes:
         if not _safe(c.get("path")) or c["path"] not in sources or not isinstance(c.get("content"), str):
             raise RuntimeError("Unsafe AI change")
+        if c["path"].lower().endswith(".py"):
+            try:
+                compile(c["content"], c["path"], "exec")
+            except SyntaxError as exc:
+                raise RuntimeError(f"AI generated invalid Python for {c['path']}: {exc}") from exc
 
     result = {"request": request, "plan": plan, "proposed_changes": [{"path": c["path"], "reason": c.get("reason", "")} for c in changes], "applied": False}
     if not auto_apply:
