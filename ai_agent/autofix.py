@@ -37,24 +37,71 @@ def run_autofix(request, auto_apply=True):
         raise RuntimeError("Unsafe AI file plan")
 
     sources = {p: github.read_file(p) for p in files}
+    source_payload = {p: {"sha": d["sha"], "content": d["content"]} for p, d in sources.items()}
+    allowed_paths = list(sources.keys())
     patch = _json(agent._call_ai(
-        "Return ONLY JSON with keys summary and changes. Each change must contain path, complete content, and reason. Modify only SOURCE_FILES. Preserve unrelated behavior. Never modify secrets or credentials.",
-        json.dumps({"request": request, "plan": plan, "SOURCE_FILES": {p: {"sha": d["sha"], "content": d["content"]} for p, d in sources.items()}}, indent=2),
+        "Return ONLY JSON with keys summary and changes. "
+        "IMPORTANT: changes may be an empty list when no safe change is needed. "
+        "Every change must be an object with path, complete content, and reason. "
+        "The path MUST be exactly one of ALLOWED_PATHS. Never invent or rename paths. "
+        "If no safe change is needed, return changes as []. Preserve unrelated behavior. "
+        "Never modify secrets or credentials.",
+        json.dumps({
+            "request": request,
+            "plan": plan,
+            "ALLOWED_PATHS": allowed_paths,
+            "SOURCE_FILES": source_payload,
+        }, indent=2),
     ))
     changes = patch.get("changes")
     if not isinstance(changes, list) or len(changes) > 8:
         raise RuntimeError("Invalid AI change set")
+
+    invalid = []
     for c in changes:
-        if not _safe(c.get("path")) or c["path"] not in sources or not isinstance(c.get("content"), str):
-            raise RuntimeError("Unsafe AI change")
-        if c["path"].lower().endswith(".py"):
+        if not isinstance(c, dict):
+            invalid.append("change is not an object")
+            continue
+        path = c.get("path")
+        if not _safe(path) or path not in sources or not isinstance(c.get("content"), str):
+            invalid.append(f"invalid change path/content: {path!r}")
+            continue
+        if path.lower().endswith(".py"):
             try:
-                compile(c["content"], c["path"], "exec")
+                compile(c["content"], path, "exec")
             except SyntaxError as exc:
-                raise RuntimeError(f"AI generated invalid Python for {c['path']}: {exc}") from exc
+                invalid.append(f"invalid Python for {path}: {exc}")
+    if invalid:
+        patch = _json(agent._call_ai(
+            "Return ONLY JSON with keys summary and changes. "
+            "Repair the previous patch. changes MUST be a list of zero or more objects. "
+            "Every path MUST exactly match one of ALLOWED_PATHS and content MUST be a complete file string. "
+            "If you cannot make a safe valid change, return changes as [].",
+            json.dumps({
+                "request": request,
+                "ALLOWED_PATHS": allowed_paths,
+                "SOURCE_FILES": source_payload,
+                "previous_patch": patch,
+                "validation_errors": invalid,
+            }, indent=2),
+        ))
+        changes = patch.get("changes")
+        if not isinstance(changes, list) or len(changes) > 8:
+            raise RuntimeError("Invalid AI change set")
+        for c in changes:
+            if not isinstance(c, dict) or not _safe(c.get("path")) or c["path"] not in sources or not isinstance(c.get("content"), str):
+                raise RuntimeError("Unsafe AI change")
+            if c["path"].lower().endswith(".py"):
+                try:
+                    compile(c["content"], c["path"], "exec")
+                except SyntaxError as exc:
+                    raise RuntimeError(f"AI generated invalid Python for {c['path']}: {exc}") from exc
 
     result = {"request": request, "plan": plan, "proposed_changes": [{"path": c["path"], "reason": c.get("reason", "")} for c in changes], "applied": False}
     if not auto_apply:
+        return result
+    if not changes:
+        result["status"] = "no_change_needed"
         return result
 
     commits = []
