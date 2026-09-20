@@ -109,20 +109,13 @@ def run_autofix(request, auto_apply=True, job_id=None):
     commit = github.update_files_atomic(changes, commit_message)
     commits = [commit]
     latest = commit["commit_sha"]
-    deploy = render.trigger_deploy(latest)
-    deploy_id = deploy.get("id") or (deploy.get("deploy") or {}).get("id")
-    result.update({"applied": True, "commits": commits, "deploy": deploy})
-
-    if deploy_id:
-        last = deploy
-        deadline = time.monotonic() + 180
-        while time.monotonic() < deadline:
-            time.sleep(5)
-            last = render.get_deploy(deploy_id)
-            status = str(last.get("status") or (last.get("deploy") or {}).get("status") or "").lower()
-            if status in {"live", "succeeded", "success", "failed", "canceled", "cancelled"}:
-                break
-        result["deployment_verification"] = {"deploy_id": deploy_id, "status": last.get("status") or (last.get("deploy") or {}).get("status")}
+    # The Render service is connected to this Git branch and auto-deploys on
+    # every push. Do not trigger a second manual deploy here.
+    result.update({
+        "applied": True,
+        "commits": commits,
+        "deploy": {"mode": "render_auto_deploy", "commit_sha": latest},
+    })
 
     test_url = settings.AI_AGENT_TEST_URL or render.get_service_url()
     if test_url:
