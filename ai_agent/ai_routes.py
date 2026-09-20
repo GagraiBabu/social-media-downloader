@@ -1,12 +1,12 @@
 import logging
 import secrets
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
 from .agent import agent
-from .autofix import run_autofix
 from .config import settings
+from .jobs import create_job, get_job
 
 
 logger = logging.getLogger("ai_backend_doctor")
@@ -34,7 +34,11 @@ def verify_ai_access(x_ai_admin_key: str | None):
 @router.get("/health")
 async def ai_health(x_ai_admin_key: str | None = Header(default=None)):
     verify_ai_access(x_ai_admin_key)
-    return {"status": "ok", "service": "AI Backend Doctor", "branch": settings.GITHUB_BRANCH}
+    return {
+        "status": "ok",
+        "service": "AI Backend Doctor",
+        "branch": settings.GITHUB_BRANCH,
+    }
 
 
 @router.post("/diagnose")
@@ -63,15 +67,27 @@ def ai_inspect(path: str, x_ai_admin_key: str | None = Header(default=None)):
         raise HTTPException(status_code=502, detail="File inspection failed") from exc
 
 
-@router.post("/run")
+@router.post("/run", status_code=status.HTTP_202_ACCEPTED)
 def ai_run(payload: AutoFixRequest, x_ai_admin_key: str | None = Header(default=None)):
     verify_ai_access(x_ai_admin_key)
     if settings.GITHUB_BRANCH == "main":
         raise HTTPException(status_code=503, detail="AI agent refuses to modify main")
     try:
-        return {"success": True, "result": run_autofix(payload.request, payload.auto_apply)}
-    except TimeoutError as exc:
-        raise HTTPException(status_code=504, detail=str(exc)) from exc
+        job = create_job(payload.request, payload.auto_apply)
+        return {
+            "success": True,
+            "message": "AI agent job started",
+            "job": job,
+        }
     except Exception as exc:
-        logger.exception("AI autonomous run failed: %s", type(exc).__name__)
-        raise HTTPException(status_code=502, detail="AI autonomous run failed") from exc
+        logger.exception("AI autonomous job could not start: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="AI autonomous job could not start") from exc
+
+
+@router.get("/jobs/{job_id}")
+def ai_job_status(job_id: str, x_ai_admin_key: str | None = Header(default=None)):
+    verify_ai_access(x_ai_admin_key)
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="AI job not found")
+    return {"success": True, "job": job}
