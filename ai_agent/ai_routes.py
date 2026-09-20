@@ -5,16 +5,21 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .agent import agent
+from .autofix import run_autofix
 from .config import settings
 
 
 logger = logging.getLogger("ai_backend_doctor")
-
 router = APIRouter(prefix="/ai", tags=["AI Backend Doctor"])
 
 
 class DiagnoseRequest(BaseModel):
     message: str = Field(default="Check my backend", min_length=1, max_length=2000)
+
+
+class AutoFixRequest(BaseModel):
+    request: str = Field(min_length=1, max_length=4000)
+    auto_apply: bool = True
 
 
 def verify_ai_access(x_ai_admin_key: str | None):
@@ -29,19 +34,15 @@ def verify_ai_access(x_ai_admin_key: str | None):
 @router.get("/health")
 async def ai_health(x_ai_admin_key: str | None = Header(default=None)):
     verify_ai_access(x_ai_admin_key)
-    return {"status": "ok", "service": "AI Backend Doctor"}
+    return {"status": "ok", "service": "AI Backend Doctor", "branch": settings.GITHUB_BRANCH}
 
 
 @router.post("/diagnose")
-def ai_diagnose(
-    payload: DiagnoseRequest,
-    x_ai_admin_key: str | None = Header(default=None),
-):
+def ai_diagnose(payload: DiagnoseRequest, x_ai_admin_key: str | None = Header(default=None)):
     verify_ai_access(x_ai_admin_key)
     try:
         return {"success": True, "result": agent.diagnose(payload.message)}
     except TimeoutError as exc:
-        logger.warning("AI diagnosis timeout: %s", exc)
         raise HTTPException(status_code=504, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("AI diagnosis failed: %s", type(exc).__name__)
@@ -49,27 +50,28 @@ def ai_diagnose(
 
 
 @router.get("/inspect")
-def ai_inspect(
-    path: str,
-    x_ai_admin_key: str | None = Header(default=None),
-):
+def ai_inspect(path: str, x_ai_admin_key: str | None = Header(default=None)):
     verify_ai_access(x_ai_admin_key)
-
     if not path or path.startswith("/") or ".." in path.split("/"):
-        raise HTTPException(
-            status_code=400,
-            detail="Use a repository-relative file path",
-        )
-
+        raise HTTPException(status_code=400, detail="Use a repository-relative file path")
     try:
         return {"success": True, "result": agent.inspect_file(path)}
     except TimeoutError as exc:
-        logger.warning("File inspection timeout for path=%s", path)
         raise HTTPException(status_code=504, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception(
-            "File inspection failed for path=%s: %s",
-            path,
-            type(exc).__name__,
-        )
+        logger.exception("File inspection failed for %s: %s", path, type(exc).__name__)
         raise HTTPException(status_code=502, detail="File inspection failed") from exc
+
+
+@router.post("/run")
+def ai_run(payload: AutoFixRequest, x_ai_admin_key: str | None = Header(default=None)):
+    verify_ai_access(x_ai_admin_key)
+    if settings.GITHUB_BRANCH == "main":
+        raise HTTPException(status_code=503, detail="AI agent refuses to modify main")
+    try:
+        return {"success": True, "result": run_autofix(payload.request, payload.auto_apply)}
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("AI autonomous run failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="AI autonomous run failed") from exc
