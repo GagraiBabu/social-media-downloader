@@ -1,9 +1,14 @@
+import logging
 import secrets
+
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .agent import agent
 from .config import settings
+
+
+logger = logging.getLogger("ai_backend_doctor")
 
 router = APIRouter(
     prefix="/ai",
@@ -70,6 +75,8 @@ async def ai_diagnose(
         }
 
     except Exception:
+        logger.exception("AI diagnosis failed")
+
         raise HTTPException(
             status_code=500,
             detail="AI diagnosis failed"
@@ -98,6 +105,11 @@ async def ai_inspect(
         }
 
     except Exception:
+        logger.exception(
+            "File inspection failed for path=%s",
+            path
+        )
+
         raise HTTPException(
             status_code=500,
             detail="File inspection failed"
