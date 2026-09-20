@@ -112,5 +112,109 @@ class GitHubTools:
             "path": path,
         }
 
+    def update_files_atomic(self, changes, message):
+        """Commit multiple file changes as one Git commit."""
+        self._check_write_config()
+        if not isinstance(changes, list) or not changes:
+            raise ValueError("At least one change is required")
+        for change in changes:
+            path = change.get("path")
+            content = change.get("content")
+            if not path or path.startswith("/") or ".." in path.split("/") or not isinstance(content, str):
+                raise ValueError(f"Unsafe repository change: {path!r}")
+
+        ref_response = requests.get(
+            f"{self.base_url}/git/ref/heads/{self.branch}",
+            headers=self.headers,
+            timeout=20,
+        )
+        self._raise_github_error(ref_response, "reading branch ref")
+        parent_sha = (ref_response.json().get("object") or {}).get("sha")
+        if not parent_sha:
+            raise RuntimeError("GitHub did not return the current branch SHA")
+
+        commit_response = requests.get(
+            f"{self.base_url}/git/commits/{parent_sha}",
+            headers=self.headers,
+            timeout=20,
+        )
+        self._raise_github_error(commit_response, "reading branch commit")
+        base_tree_sha = (commit_response.json().get("tree") or {}).get("sha")
+        if not base_tree_sha:
+            raise RuntimeError("GitHub did not return the current tree SHA")
+
+        tree_entries = []
+        for change in changes:
+            blob_response = requests.post(
+                f"{self.base_url}/git/blobs",
+                headers=self.headers,
+                json={"content": change["content"], "encoding": "utf-8"},
+                timeout=30,
+            )
+            self._raise_github_error(blob_response, f"creating blob for {change['path']}")
+            blob_sha = (blob_response.json() or {}).get("sha")
+            if not blob_sha:
+                raise RuntimeError(f"GitHub did not return a blob SHA for {change['path']}")
+            tree_entries.append({
+                "path": change["path"],
+                "mode": "100644",
+                "type": "blob",
+                "sha": blob_sha,
+            })
+
+        tree_response = requests.post(
+            f"{self.base_url}/git/trees",
+            headers=self.headers,
+            json={"base_tree": base_tree_sha, "tree": tree_entries},
+            timeout=30,
+        )
+        self._raise_github_error(tree_response, "creating atomic change tree")
+        tree_sha = (tree_response.json() or {}).get("sha")
+        if not tree_sha:
+            raise RuntimeError("GitHub did not return the new tree SHA")
+
+        new_commit_response = requests.post(
+            f"{self.base_url}/git/commits",
+            headers=self.headers,
+            json={"message": message, "tree": tree_sha, "parents": [parent_sha]},
+            timeout=30,
+        )
+        self._raise_github_error(new_commit_response, "creating atomic commit")
+        new_commit_sha = (new_commit_response.json() or {}).get("sha")
+        if not new_commit_sha:
+            raise RuntimeError("GitHub did not return the new commit SHA")
+
+        ref_response = requests.patch(
+            f"{self.base_url}/git/refs/heads/{self.branch}",
+            headers=self.headers,
+            json={"sha": new_commit_sha, "force": False},
+            timeout=30,
+        )
+        self._raise_github_error(ref_response, "updating branch ref")
+        return {
+            "commit_sha": new_commit_sha,
+            "paths": [change["path"] for change in changes],
+        }
+
+    def find_job_commit(self, job_id):
+        self._check_read_config()
+        response = requests.get(
+            f"{self.base_url}/commits",
+            headers=self.headers,
+            params={"sha": self.branch, "per_page": 30},
+            timeout=20,
+        )
+        self._raise_github_error(response, "searching job commits")
+        marker = f"[AI-JOB:{job_id}]"
+        for item in response.json():
+            message = ((item.get("commit") or {}).get("message") or "")
+            if marker in message:
+                return {
+                    "commit_sha": item.get("sha"),
+                    "message": message,
+                    "html_url": item.get("html_url"),
+                }
+        return None
+
 
 github = GitHubTools()
