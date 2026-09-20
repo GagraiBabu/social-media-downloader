@@ -21,6 +21,7 @@ from config import settings
 from security import validate_url_security
 from detector import detect_platform, normalize_url, PLATFORM_PATTERNS
 from extractor import extract_media_info, download_media_file, MediaExtractionError
+from ai_agent.ai_routes import router as ai_router
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +51,9 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# AI Backend Doctor routes
+app.include_router(ai_router)
 
 # ---------------------------------------------------------------------------
 # CORS Middleware
