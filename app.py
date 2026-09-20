@@ -3,25 +3,36 @@ Social Media Video Downloader Backend API.
 Built with FastAPI, yt-dlp, and Pydantic for high-performance, production-ready video extraction.
 """
 
+import asyncio
+import logging
 import os
 import shutil
 import time
 from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any
-import asyncio
 
 from starlette.concurrency import run_in_threadpool
 
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field
 
 from config import settings
 from security import validate_url_security
 from detector import detect_platform, normalize_url, PLATFORM_PATTERNS
 from extractor import extract_media_info, download_media_file, MediaExtractionError
-from ai_agent.ai_routes import router as ai_router
+
+
+logger = logging.getLogger(__name__)
+
+# The AI routes are an optional extension. A missing extension dependency must
+# not prevent the core downloader API or Render health check from starting.
+try:
+    from ai_agent.ai_routes import router as ai_router
+except ModuleNotFoundError as exc:
+    ai_router = None
+    logger.warning("AI Backend Doctor routes are unavailable: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -52,8 +63,9 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# AI Backend Doctor routes
-app.include_router(ai_router)
+# AI Backend Doctor routes, when the optional extension is available.
+if ai_router is not None:
+    app.include_router(ai_router)
 
 # ---------------------------------------------------------------------------
 # CORS Middleware
