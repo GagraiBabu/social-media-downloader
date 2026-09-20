@@ -8,19 +8,11 @@ class Settings:
     GITHUB_OWNER = os.getenv("GITHUB_OWNER", "")
     GITHUB_REPO = os.getenv("GITHUB_REPO", "")
     GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "ai-agent-dev")
-
     RENDER_API_KEY = os.getenv("RENDER_API_KEY", "")
     RENDER_SERVICE_ID = os.getenv("RENDER_SERVICE_ID", "")
-
-    BACKEND_URL = os.getenv(
-        "BACKEND_URL",
-        ""
-    )
-
-    AI_MODEL = os.getenv(
-        "AI_MODEL",
-        "gpt-5.6"
-    )
+    BACKEND_URL = os.getenv("BACKEND_URL", "")
+    AI_AGENT_TEST_URL = os.getenv("AI_AGENT_TEST_URL", "")
+    AI_MODEL = os.getenv("AI_MODEL", "gpt-5.6")
 
 
 settings = Settings()
