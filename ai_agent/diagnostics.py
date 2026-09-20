@@ -13,10 +13,8 @@ class Diagnostics:
             "errors": [],
         }
 
-        # GitHub repository
         try:
             repo = github.get_repository()
-
             report["repository"] = {
                 "name": repo.get("full_name"),
                 "private": repo.get("private"),
@@ -24,15 +22,10 @@ class Diagnostics:
                 "url": repo.get("html_url"),
             }
         except Exception as exc:
-            report["errors"].append({
-                "source": "github",
-                "error": str(exc),
-            })
+            report["errors"].append({"source": "github", "error": str(exc)})
 
-        # Render service
         try:
             service = render.get_service()
-
             report["render_service"] = {
                 "name": service.get("name"),
                 "type": service.get("type"),
@@ -40,20 +33,11 @@ class Diagnostics:
                 "suspended": service.get("suspended"),
             }
         except Exception as exc:
-            report["errors"].append({
-                "source": "render",
-                "error": str(exc),
-            })
+            report["errors"].append({"source": "render", "error": str(exc)})
 
-        # Recent Render deployments
         try:
             deployments = render.get_deploys()
-
-            if isinstance(deployments, dict):
-                items = deployments.get("items", [])
-            else:
-                items = deployments
-
+            items = deployments.get("items", []) if isinstance(deployments, dict) else deployments
             report["deployments"] = [
                 {
                     "id": item.get("deploy", {}).get("id")
@@ -62,74 +46,45 @@ class Diagnostics:
                     "status": item.get("deploy", {}).get("status")
                     if isinstance(item.get("deploy"), dict)
                     else item.get("status"),
-                    "created_at": item.get("deploy", {}).get(
-                        "createdAt"
-                    )
+                    "created_at": item.get("deploy", {}).get("createdAt")
                     if isinstance(item.get("deploy"), dict)
                     else item.get("createdAt"),
                 }
                 for item in items[:10]
             ]
         except Exception as exc:
-            report["errors"].append({
-                "source": "render_deployments",
-                "error": str(exc),
-            })
+            report["errors"].append({"source": "render_deployments", "error": str(exc)})
 
-        # Backend health
         try:
             report["backend_health"] = api_tester.health_check()
         except Exception as exc:
-            report["errors"].append({
-                "source": "backend",
-                "error": str(exc),
-            })
+            report["errors"].append({"source": "backend", "error": str(exc)})
 
         report["summary"] = self._build_summary(report)
-
         return report
 
     def _build_summary(self, report):
         problems = []
 
         health = report.get("backend_health")
-
         if health and not health.get("ok"):
-            problems.append(
-                "Backend health check failed"
-            )
+            problems.append("Backend health check failed")
 
         service = report.get("render_service")
-
         if service:
-            status = str(
-                service.get("status", "")
-            ).lower()
-
-            if status and status not in {
-                "live",
-                "running",
-                "available",
-            }:
-                problems.append(
-                    f"Render service status: {status}"
-                )
+            raw_status = service.get("status")
+            if isinstance(raw_status, str) and raw_status.strip():
+                status = raw_status.lower()
+                if status not in {"live", "running", "available"}:
+                    problems.append(f"Render service status: {status}")
 
         for error in report.get("errors", []):
-            problems.append(
-                f"{error['source']}: {error['error']}"
-            )
+            problems.append(f"{error['source']}: {error['error']}")
 
         if not problems:
-            return {
-                "status": "healthy",
-                "problems": [],
-            }
+            return {"status": "healthy", "problems": []}
 
-        return {
-            "status": "needs_attention",
-            "problems": problems,
-        }
+        return {"status": "needs_attention", "problems": problems}
 
 
 diagnostics = Diagnostics()
