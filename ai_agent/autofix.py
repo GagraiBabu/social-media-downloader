@@ -20,7 +20,7 @@ def _safe(path):
     return isinstance(path, str) and path and not path.startswith("/") and ".." not in path.split("/") and not path.lower().endswith((".env", ".pem", ".key"))
 
 
-def run_autofix(request, auto_apply=True):
+def run_autofix(request, auto_apply=True, job_id=None):
     if settings.GITHUB_BRANCH == "main":
         raise RuntimeError("AI agent refuses to modify main")
 
@@ -104,12 +104,11 @@ def run_autofix(request, auto_apply=True):
         result["status"] = "no_change_needed"
         return result
 
-    commits = []
-    for c in changes:
-        current = github.read_file(c["path"])
-        commits.append(github.update_file(c["path"], c["content"], current["sha"], "AI agent: fix " + c["path"]))
-
-    latest = commits[-1]["commit_sha"]
+    commit_marker = f" [AI-JOB:{job_id}]" if job_id else ""
+    commit_message = "AI agent: apply approved fix" + commit_marker
+    commit = github.update_files_atomic(changes, commit_message)
+    commits = [commit]
+    latest = commit["commit_sha"]
     deploy = render.trigger_deploy(latest)
     deploy_id = deploy.get("id") or (deploy.get("deploy") or {}).get("id")
     result.update({"applied": True, "commits": commits, "deploy": deploy})
