@@ -3,6 +3,7 @@ import os
 
 class Settings:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+    AI_ADMIN_KEY = os.getenv("AI_ADMIN_KEY", "")
     GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
     GITHUB_OWNER = os.getenv("GITHUB_OWNER", "")
     GITHUB_REPO = os.getenv("GITHUB_REPO", "")
