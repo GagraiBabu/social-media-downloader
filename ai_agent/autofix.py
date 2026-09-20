@@ -42,7 +42,7 @@ def run_autofix(request, auto_apply=True):
         json.dumps({"request": request, "plan": plan, "SOURCE_FILES": {p: {"sha": d["sha"], "content": d["content"]} for p, d in sources.items()}}, indent=2),
     ))
     changes = patch.get("changes")
-    if not isinstance(changes, list) or not changes or len(changes) > 8:
+    if not isinstance(changes, list) or len(changes) > 8:
         raise RuntimeError("Invalid AI change set")
     for c in changes:
         if not _safe(c.get("path")) or c["path"] not in sources or not isinstance(c.get("content"), str):
