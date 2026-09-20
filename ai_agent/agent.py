@@ -10,7 +10,6 @@ class BackendAgent:
     def __init__(self):
         self.api_key = settings.OPENAI_API_KEY
         self.model = settings.AI_MODEL
-
         self.url = "https://api.openai.com/v1/responses"
 
     def _check_config(self):
@@ -18,6 +17,46 @@ class BackendAgent:
             raise RuntimeError(
                 "OPENAI_API_KEY is not configured"
             )
+
+    def _extract_output_text(self, data):
+        # Some Responses API responses may expose output_text directly.
+        direct_text = data.get("output_text")
+        if isinstance(direct_text, str) and direct_text.strip():
+            return direct_text.strip()
+
+        # Raw HTTP Responses API format normally contains
+        # generated text inside output -> message -> content.
+        parts = []
+
+        output = data.get("output", [])
+
+        if isinstance(output, list):
+            for item in output:
+                if not isinstance(item, dict):
+                    continue
+
+                content = item.get("content", [])
+
+                if not isinstance(content, list):
+                    continue
+
+                for content_item in content:
+                    if not isinstance(content_item, dict):
+                        continue
+
+                    text = content_item.get("text")
+
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+
+        result = "\n".join(parts).strip()
+
+        if not result:
+            raise RuntimeError(
+                "OpenAI returned a response, but no text output was found"
+            )
+
+        return result
 
     def _call_ai(self, instructions, input_text):
         self._check_config()
@@ -40,11 +79,19 @@ class BackendAgent:
             timeout=120,
         )
 
-        response.raise_for_status()
+        if not response.ok:
+            try:
+                error_data = response.json()
+            except Exception:
+                error_data = response.text[:1000]
+
+            raise RuntimeError(
+                f"OpenAI API error {response.status_code}: {error_data}"
+            )
 
         data = response.json()
 
-        return data.get("output_text", "")
+        return self._extract_output_text(data)
 
     def diagnose(self, user_message="Check my backend"):
         report = diagnostics.run()
