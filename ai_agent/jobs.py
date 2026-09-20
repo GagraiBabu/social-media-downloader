@@ -30,7 +30,7 @@ def _run(job_id: str, request: str, auto_apply: bool):
         _jobs[job_id]["status"] = "running"
         _jobs[job_id]["started_at"] = time.time()
     try:
-        result = run_autofix(request, auto_apply)
+        result = run_autofix(request, auto_apply, job_id)
         with _lock:
             _jobs[job_id]["status"] = "completed"
             _jobs[job_id]["result"] = result
@@ -45,6 +45,22 @@ def _run(job_id: str, request: str, auto_apply: bool):
 def get_job(job_id: str):
     with _lock:
         job = _jobs.get(job_id)
-        if not job:
-            return None
-        return dict(job)
+        if job:
+            return dict(job)
+
+    # Successful jobs can survive a Render restart because the commit is
+    # recorded in Git history with the job marker.
+    try:
+        from .github_tools import github
+        commit = github.find_job_commit(job_id)
+    except Exception:
+        commit = None
+    if commit:
+        return {
+            "job_id": job_id,
+            "status": "completed_recovered",
+            "recovered": True,
+            "message": "AI job committed successfully; the web process restarted during deployment, so the in-memory state was recovered from GitHub.",
+            "commit": commit,
+        }
+    return None
