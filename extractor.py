@@ -176,6 +176,25 @@ def _classify_ytdlp_error(error: Exception) -> MediaExtractionError:
     )
 
 
+def _extract_info_with_social_fallback(url: str, detected_platform: Optional[str], opts: Dict[str, Any], download: bool = False):
+    """Try browser impersonation first, then a plain HTTP path."""
+    attempts = [dict(opts)]
+    if (detected_platform or "").lower() in {"facebook", "instagram"} and opts.get("impersonate"):
+        fallback = dict(opts)
+        fallback.pop("impersonate", None)
+        attempts.append(fallback)
+
+    last_error = None
+    for attempt in attempts:
+        try:
+            with yt_dlp.YoutubeDL(attempt) as ydl:
+                return ydl.extract_info(url, download=download)
+        except Exception as exc:
+            last_error = exc
+
+    raise last_error
+
+
 def extract_media_info(url: str, detected_platform: Optional[str] = None) -> Dict[str, Any]:
     """
     Extracts video metadata without downloading the media.
@@ -188,8 +207,7 @@ def extract_media_info(url: str, detected_platform: Optional[str] = None) -> Dic
     opts["socket_timeout"] = settings.INFO_TIMEOUT_SECONDS
 
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
     except Exception as e:
         raise _classify_ytdlp_error(e)
 
@@ -313,8 +331,7 @@ def download_media_file(
     })
 
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+        info = _extract_info_with_social_fallback(url, detected_platform, opts, download=True)
     except Exception as e:
         # If download failed, clean up the temporary directory immediately
         shutil.rmtree(temp_dir, ignore_errors=True)
