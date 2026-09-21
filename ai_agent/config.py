@@ -21,7 +21,7 @@ class Settings:
         '{"facebook":"https://www.facebook.com/share/r/19e5GXfTpF/"}',
     )
     AI_AGENT_DEEP_TESTS = os.getenv("AI_AGENT_DEEP_TESTS", "true").lower() in ("true", "1", "yes")
-    AI_AGENT_MAX_REPAIR_ATTEMPTS = max(1, min(5, int(os.getenv("AI_AGENT_MAX_REPAIR_ATTEMPTS", "5"))))
+    AI_AGENT_MAX_REPAIR_ATTEMPTS = max(5, min(15, int(os.getenv("AI_AGENT_MAX_REPAIR_ATTEMPTS", "15"))))
     AI_AGENT_HEALTH_TIMEOUT_SECONDS = max(5, int(os.getenv("AI_AGENT_HEALTH_TIMEOUT_SECONDS", "30")))
     AI_AGENT_INFO_TEST_TIMEOUT_SECONDS = max(15, int(os.getenv("AI_AGENT_INFO_TEST_TIMEOUT_SECONDS", "60")))
     AI_AGENT_DOWNLOAD_TEST_TIMEOUT_SECONDS = max(30, int(os.getenv("AI_AGENT_DOWNLOAD_TEST_TIMEOUT_SECONDS", "240")))
