@@ -92,7 +92,7 @@ class BackendAgent:
         return self._extract_output_text(response.json())
 
     def diagnose(self, user_message="Check my backend"):
-        report = diagnostics.run()
+        report = diagnostics.run(deep=settings.AI_AGENT_DEEP_TESTS)
         prompt = f"""
 You are an AI backend diagnostic engineer.
 

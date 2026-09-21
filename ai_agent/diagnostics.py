@@ -4,12 +4,14 @@ from .api_tester import api_tester
 
 
 class Diagnostics:
-    def run(self):
+    def run(self, deep=False):
         report = {
             "repository": None,
             "render_service": None,
             "deployments": None,
             "backend_health": None,
+            "api_tests": {},
+            "deep": bool(deep),
             "errors": [],
         }
 
@@ -40,15 +42,10 @@ class Diagnostics:
             items = deployments.get("items", []) if isinstance(deployments, dict) else deployments
             report["deployments"] = [
                 {
-                    "id": item.get("deploy", {}).get("id")
-                    if isinstance(item.get("deploy"), dict)
-                    else item.get("id"),
-                    "status": item.get("deploy", {}).get("status")
-                    if isinstance(item.get("deploy"), dict)
-                    else item.get("status"),
-                    "created_at": item.get("deploy", {}).get("createdAt")
-                    if isinstance(item.get("deploy"), dict)
-                    else item.get("createdAt"),
+                    "id": item.get("deploy", {}).get("id") if isinstance(item.get("deploy"), dict) else item.get("id"),
+                    "status": item.get("deploy", {}).get("status") if isinstance(item.get("deploy"), dict) else item.get("status"),
+                    "created_at": item.get("deploy", {}).get("createdAt") if isinstance(item.get("deploy"), dict) else item.get("createdAt"),
+                    "commit": self._extract_commit(item),
                 }
                 for item in items[:10]
             ]
@@ -60,8 +57,33 @@ class Diagnostics:
         except Exception as exc:
             report["errors"].append({"source": "backend", "error": str(exc)})
 
+        if deep:
+            try:
+                report["api_tests"]["info"] = api_tester.info_test()
+            except Exception as exc:
+                report["errors"].append({"source": "api_info_test", "error": str(exc)})
+            try:
+                report["api_tests"]["download"] = api_tester.download_test()
+            except Exception as exc:
+                report["errors"].append({"source": "api_download_test", "error": str(exc)})
+
         report["summary"] = self._build_summary(report)
         return report
+
+    @staticmethod
+    def _extract_commit(item):
+        if not isinstance(item, dict):
+            return None
+        deploy = item.get("deploy") if isinstance(item.get("deploy"), dict) else item
+        if not isinstance(deploy, dict):
+            return None
+        for key in ("commit", "commitId", "commit_id", "commitID"):
+            value = deploy.get(key)
+            if isinstance(value, dict):
+                value = value.get("id") or value.get("sha")
+            if isinstance(value, str) and value:
+                return value
+        return None
 
     def _build_summary(self, report):
         problems = []
@@ -69,6 +91,13 @@ class Diagnostics:
         health = report.get("backend_health")
         if health and not health.get("ok"):
             problems.append("Backend health check failed")
+
+        for name, test in report.get("api_tests", {}).items():
+            if isinstance(test, dict) and not test.get("ok") and not test.get("skipped"):
+                reason = test.get("failure_reason") or test.get("error") or f"{name} test failed"
+                problems.append(f"API {name} test failed: {reason}")
+            if isinstance(test, dict) and test.get("skipped"):
+                problems.append(f"API {name} test skipped: {test.get('reason', 'not configured')}")
 
         service = report.get("render_service")
         if service:
@@ -83,7 +112,6 @@ class Diagnostics:
 
         if not problems:
             return {"status": "healthy", "problems": []}
-
         return {"status": "needs_attention", "problems": problems}
 
 
