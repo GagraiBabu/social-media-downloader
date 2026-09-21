@@ -25,6 +25,25 @@ def run_autofix(request, auto_apply=True, job_id=None):
         raise RuntimeError("AI agent refuses to modify main")
 
     report = diagnostics.run()
+
+    # A healthy backend must not be changed merely because the user asked
+    # the agent to "check" it. This deterministic gate prevents the model
+    # from inventing a bug and producing an unnecessary commit.
+    summary = report.get("summary") or {}
+    if summary.get("status") == "healthy":
+        return {
+            "request": request,
+            "plan": {
+                "summary": "Backend diagnostics are healthy; no code change is justified.",
+                "files": [],
+                "steps": ["Run diagnostics", "Confirm backend health", "Leave ai-agent-dev unchanged"],
+            },
+            "proposed_changes": [],
+            "applied": False,
+            "status": "no_change_needed",
+            "diagnostics": report,
+        }
+
     root = github.list_files("")
     paths = [x.get("path") for x in root if isinstance(x, dict) and x.get("path")]
 
@@ -42,12 +61,14 @@ def run_autofix(request, auto_apply=True, job_id=None):
     patch = _json(agent._call_ai(
         "Return ONLY JSON with keys summary and changes. "
         "IMPORTANT: changes may be an empty list when no safe change is needed. "
-        "Every change must be an object with path, complete content, and reason. "
+        "Every change must be an object with path, complete content, and reason. " 
+        "A non-empty reason is REQUIRED and must cite a confirmed diagnostic finding or reproducible failure. "
         "The path MUST be exactly one of ALLOWED_PATHS. Never invent or rename paths. "
         "If no safe change is needed, return changes as []. Preserve unrelated behavior. "
         "Never modify secrets or credentials.",
         json.dumps({
             "request": request,
+            "diagnostics": report,
             "plan": plan,
             "ALLOWED_PATHS": allowed_paths,
             "SOURCE_FILES": source_payload,
@@ -63,7 +84,13 @@ def run_autofix(request, auto_apply=True, job_id=None):
             invalid.append("change is not an object")
             continue
         path = c.get("path")
-        if not _safe(path) or path not in sources or not isinstance(c.get("content"), str):
+        if (
+            not _safe(path)
+            or path not in sources
+            or not isinstance(c.get("content"), str)
+            or not isinstance(c.get("reason"), str)
+            or not c.get("reason", "").strip()
+        ):
             invalid.append(f"invalid change path/content: {path!r}")
             continue
         if path.lower().endswith(".py"):
@@ -75,6 +102,7 @@ def run_autofix(request, auto_apply=True, job_id=None):
         patch = _json(agent._call_ai(
             "Return ONLY JSON with keys summary and changes. "
             "Repair the previous patch. changes MUST be a list of zero or more objects. "
+            "Every non-empty change MUST have a non-empty reason tied to confirmed diagnostics. "
             "Every path MUST exactly match one of ALLOWED_PATHS and content MUST be a complete file string. "
             "If you cannot make a safe valid change, return changes as [].",
             json.dumps({
@@ -89,7 +117,14 @@ def run_autofix(request, auto_apply=True, job_id=None):
         if not isinstance(changes, list) or len(changes) > 8:
             raise RuntimeError("Invalid AI change set")
         for c in changes:
-            if not isinstance(c, dict) or not _safe(c.get("path")) or c["path"] not in sources or not isinstance(c.get("content"), str):
+            if (
+                not isinstance(c, dict)
+                or not _safe(c.get("path"))
+                or c["path"] not in sources
+                or not isinstance(c.get("content"), str)
+                or not isinstance(c.get("reason"), str)
+                or not c.get("reason", "").strip()
+            ):
                 raise RuntimeError("Unsafe AI change")
             if c["path"].lower().endswith(".py"):
                 try:
