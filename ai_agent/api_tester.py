@@ -66,6 +66,50 @@ class APITester:
         except requests.RequestException as exc:
             return {"url": endpoint, "ok": False, "error": str(exc), "error_type": type(exc).__name__, "test_video_url": test_url}
 
+    def platform_tests(self):
+        """
+        Run metadata tests for every configured platform test URL.
+        Download tests are run only for configured download-test platforms.
+        This lets the repair agent diagnose Facebook/Instagram/etc. independently
+        instead of relying on one YouTube-only smoke test.
+        """
+        self._check_config()
+        tests = {}
+        download_platforms = {
+            item.strip().lower()
+            for item in settings.AI_DOWNLOAD_TEST_PLATFORMS.split(",")
+            if item.strip()
+        }
+
+        for platform, test_url in settings.platform_test_urls.items():
+            if not test_url:
+                continue
+            info = self.info_test(test_url)
+            info["platform_expected"] = platform
+            tests[platform] = {"info": info}
+
+            if platform.lower() in download_platforms:
+                tests[platform]["download"] = self.download_test(test_url)
+
+        if not tests:
+            return {
+                "ok": False,
+                "skipped": True,
+                "reason": "No AI platform test URLs are configured",
+            }
+
+        failed = {}
+        for platform, result in tests.items():
+            for kind, test in result.items():
+                if isinstance(test, dict) and not test.get("ok") and not test.get("skipped"):
+                    failed[f"{platform}_{kind}"] = test.get("failure_reason") or test.get("error") or "test failed"
+
+        return {
+            "ok": not failed,
+            "platforms": tests,
+            "failed": failed,
+        }
+
     def download_test(self, url=None, quality=None):
         self._check_config()
         test_url = url or settings.AI_TEST_VIDEO_URL
@@ -94,8 +138,8 @@ class APITester:
                 for chunk in response.iter_content(chunk_size=64 * 1024):
                     if not chunk:
                         continue
-                    if len(sample) < 256 * 1024:
-                        sample += chunk[: 256 * 1024 - len(sample)]
+                    if len(sample) < settings.AI_AGENT_DOWNLOAD_SAMPLE_BYTES:
+                        sample += chunk[: settings.AI_AGENT_DOWNLOAD_SAMPLE_BYTES - len(sample)]
                     total_read += len(chunk)
                     if total_read >= settings.AI_AGENT_DOWNLOAD_SAMPLE_BYTES:
                         break
@@ -124,7 +168,9 @@ class APITester:
                     "looks_like_audio": looks_like_audio,
                 }
                 if not ok:
-                    result["failure_reason"] = self._download_failure_reason(response.status_code, content_type, filename, looks_like_audio)
+                    result["failure_reason"] = self._download_failure_reason(
+                        response.status_code, content_type, filename, looks_like_audio
+                    )
                 return result
         except requests.RequestException as exc:
             return {
@@ -148,7 +194,7 @@ class APITester:
     def _looks_like_video(sample, ext):
         if ext in VIDEO_EXTENSIONS:
             return True
-        if sample.startswith(b"Eß£"):
+        if sample.startswith(b"\x1a\x45\xdf\xa3"):
             return True
         if len(sample) >= 12 and sample[4:8] == b"ftyp":
             return True
