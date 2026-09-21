@@ -76,9 +76,9 @@ def _get_base_ydl_opts(is_youtube: bool = False) -> Dict[str, Any]:
         "noplaylist": True,
         "nocheckcertificate": False,
         "user_agent": settings.CUSTOM_USER_AGENT,
-        # Route yt-dlp HTTP/HTTPS traffic through Decodo when enabled.
+        # Route yt-dlp HTTP/HTTPS traffic through Webshare when enabled.
         # The proxy URL is built from Render environment variables and is never returned to clients.
-        **({"proxy": settings.DECODO_PROXY_URL} if settings.DECODO_PROXY_URL else {}),
+        **({"proxy": settings.WEBSHARE_PROXY_URL_BUILT} if settings.WEBSHARE_PROXY_URL_BUILT else {}),
         "socket_timeout": settings.INFO_TIMEOUT_SECONDS,
         "max_filesize": settings.MAX_FILE_SIZE_BYTES,
         "prefer_ffmpeg": True,
@@ -151,7 +151,7 @@ def _classify_ytdlp_error(error: Exception) -> MediaExtractionError:
 
     if "429" in err_str or "too many requests" in err_str:
         return MediaExtractionError(
-            "The platform is rate-limiting the server IP (HTTP 429). Direct connection is active; please retry after the temporary rate limit clears.",
+            "The platform is rate-limiting the current network path (HTTP 429). Webshare proxy mode is active; please retry after the temporary rate limit clears.",
             status_code=429
         )
 
