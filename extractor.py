@@ -43,7 +43,7 @@ def _build_format_selector(requested_quality: Optional[str] = None) -> str:
         # YouTube when the preferred MP4/M4A pair was unavailable.
         # bv* guarantees the selected first format contains video; ba supplies
         # audio when needed, with a combined video+audio fallback.
-        return "bv*[height<=1080]+ba/b[height<=1080]"
+        return "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b"
     
     q = requested_quality.lower().strip()
     if q in ("audio_only", "audio", "mp3", "m4a"):
@@ -56,7 +56,7 @@ def _build_format_selector(requested_quality: Optional[str] = None) -> str:
     digits = "".join(filter(str.isdigit, q))
     if digits:
         height = int(digits)
-        return f"bv*[height<={height}]+ba/b[height<={height}]"
+        return f"bv*[height<={height}]+ba/b[height<={height}]/bv*+ba/b"
 
     # Specific format ID passed directly
     return requested_quality
