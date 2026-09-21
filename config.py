@@ -54,40 +54,35 @@ class Settings:
 
     @property
     def WEBSHARE_PROXY_URL(self) -> str:
-        """Build the Webshare HTTP proxy URL used by yt-dlp."""
+        """Return the exact Webshare endpoint configured by the deployment."""
         if not self.WEBSHARE_PROXY_ENABLED:
             return ""
-        # Prefer the official username/password fields when they are configured.
-        # This prevents a stale/malformed WEBSHARE_PROXY_URL from overriding valid
-        # Webshare credentials in Render.
-        from urllib.parse import quote
-        if self.WEBSHARE_USERNAME and self.WEBSHARE_PASSWORD:
-            username = self.WEBSHARE_USERNAME
 
-            # Country must be a 2-letter ISO code. Leave blank for worldwide/random.
-            country = self.WEBSHARE_COUNTRY
-            if len(country) == 2 and country.isalpha() and f"-{country}" not in username.lower():
-                username += f"-{country}"
-
-            # Webshare rotate is a username parameter, not a proxy hostname.
-            if self.WEBSHARE_SESSION:
-                session = self.WEBSHARE_SESSION
-                if session.isdigit():
-                    username += f"-{session}"
-            elif self.WEBSHARE_ROTATE and "-rotate" not in username.lower():
-                username += "-rotate"
-
-            return (
-            f"http://{quote(username, safe='')}:{quote(self.WEBSHARE_PASSWORD, safe='')}"
-            f"@{self.WEBSHARE_HOST}:{self.WEBSHARE_PORT}"
-            )
-
-        # Raw URL is only a fallback for deployments that do not provide
-        # separate Webshare username/password variables.
+        # If Webshare's Endpoint Generator output is supplied as a complete URL,
+        # use it verbatim. Do not rewrite its username/session parameters.
         if self.WEBSHARE_PROXY_URL_RAW:
             return self.WEBSHARE_PROXY_URL_RAW
 
+        # Otherwise build the standard HTTP endpoint from the exact username and
+        # password supplied by the deployment. The username is intentionally NOT
+        # modified here: Webshare's Endpoint Generator already encodes country,
+        # sticky/rotating session, city, ASN, etc. in the username.
+        if self.WEBSHARE_USERNAME and self.WEBSHARE_PASSWORD:
+            from urllib.parse import quote
+
+            username = quote(self.WEBSHARE_USERNAME, safe="")
+            password = quote(self.WEBSHARE_PASSWORD, safe="")
+            host = self.WEBSHARE_HOST or "p.webshare.io"
+            port = self.WEBSHARE_PORT or 80
+
+            return f"http://{username}:{password}@{host}:{port}"
+
         return ""
+
+    @property
+    def WEBSHARE_PROXY_URL_BUILT(self) -> str:
+        """Backward-compatible alias for the Webshare proxy URL."""
+        return self.WEBSHARE_PROXY_URL
 
     @property
     def WEBSHARE_PROXY_URL_BUILT(self) -> str:
