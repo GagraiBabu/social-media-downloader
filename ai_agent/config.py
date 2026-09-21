@@ -1,4 +1,5 @@
 import os
+import json
 
 
 class Settings:
@@ -14,6 +15,11 @@ class Settings:
     AI_AGENT_TEST_URL = os.getenv("AI_AGENT_TEST_URL", "")
     AI_TEST_VIDEO_URL = os.getenv("AI_TEST_VIDEO_URL", "https://www.youtube.com/watch?v=BaW_jenozKc")
     AI_TEST_DOWNLOAD_QUALITY = os.getenv("AI_TEST_DOWNLOAD_QUALITY", "1080p")
+    AI_DOWNLOAD_TEST_PLATFORMS = os.getenv("AI_DOWNLOAD_TEST_PLATFORMS", "facebook,instagram")
+    AI_PLATFORM_TEST_URLS_RAW = os.getenv(
+        "AI_PLATFORM_TEST_URLS",
+        '{"facebook":"https://www.facebook.com/share/r/19e5GXfTpF/"}',
+    )
     AI_AGENT_DEEP_TESTS = os.getenv("AI_AGENT_DEEP_TESTS", "true").lower() in ("true", "1", "yes")
     AI_AGENT_MAX_REPAIR_ATTEMPTS = max(1, min(5, int(os.getenv("AI_AGENT_MAX_REPAIR_ATTEMPTS", "5"))))
     AI_AGENT_HEALTH_TIMEOUT_SECONDS = max(5, int(os.getenv("AI_AGENT_HEALTH_TIMEOUT_SECONDS", "30")))
@@ -24,6 +30,20 @@ class Settings:
     AI_AGENT_DEPLOY_POLL_SECONDS = max(3, int(os.getenv("AI_AGENT_DEPLOY_POLL_SECONDS", "8")))
     AI_AGENT_TRIGGER_DEPLOY = os.getenv("AI_AGENT_TRIGGER_DEPLOY", "true").lower() in ("true", "1", "yes")
     AI_MODEL = os.getenv("AI_MODEL", "gpt-5.6")
+
+    @property
+    def platform_test_urls(self):
+        try:
+            value = json.loads(self.AI_PLATFORM_TEST_URLS_RAW)
+            if not isinstance(value, dict):
+                return {}
+            return {
+                str(platform).strip().lower(): str(url).strip()
+                for platform, url in value.items()
+                if str(platform).strip() and str(url).strip()
+            }
+        except (TypeError, ValueError):
+            return {}
 
 
 settings = Settings()
