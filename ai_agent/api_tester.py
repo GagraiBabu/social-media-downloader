@@ -5,12 +5,12 @@ from .config import settings
 
 class APITester:
     def __init__(self):
-        self.base_url = settings.BACKEND_URL.rstrip("/")
+        self.base_url = (settings.AI_AGENT_TEST_URL or settings.BACKEND_URL).rstrip("/")
 
     def _check_config(self):
         if not self.base_url:
             raise RuntimeError(
-                "BACKEND_URL is not configured"
+                "AI_AGENT_TEST_URL or BACKEND_URL is not configured"
             )
 
     def health_check(self):
