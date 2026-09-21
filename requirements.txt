@@ -1,6 +1,6 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
-yt-dlp>=2025.2.19
+yt-dlp[default]==2026.9.16.232951.dev0
 pydantic>=2.10.0,<3.0.0
 pydantic-settings>=2.7.0
 python-multipart>=0.0.20
