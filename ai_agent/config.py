@@ -18,7 +18,7 @@ class Settings:
     AI_DOWNLOAD_TEST_PLATFORMS = os.getenv("AI_DOWNLOAD_TEST_PLATFORMS", "facebook,instagram")
     AI_PLATFORM_TEST_URLS_RAW = os.getenv(
         "AI_PLATFORM_TEST_URLS",
-        '{"facebook":"https://www.facebook.com/share/r/19e5GXfTpF/"}',
+        '{"instagram":"https://www.instagram.com/reel/DcbIMbLP35E/","facebook":"https://www.facebook.com/share/v/18VR2oCjGY/"}',
     )
     AI_AGENT_DEEP_TESTS = os.getenv("AI_AGENT_DEEP_TESTS", "true").lower() in ("true", "1", "yes")
     AI_AGENT_MAX_REPAIR_ATTEMPTS = max(5, min(15, int(os.getenv("AI_AGENT_MAX_REPAIR_ATTEMPTS", "15"))))
