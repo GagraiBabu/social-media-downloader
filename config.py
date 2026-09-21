@@ -79,11 +79,6 @@ class Settings:
         """Backward-compatible alias for the Webshare proxy URL."""
         return self.WEBSHARE_PROXY_URL
 
-    @property
-    def WEBSHARE_PROXY_URL_BUILT(self) -> str:
-        """Backward-compatible alias for the Webshare proxy URL."""
-        return self.WEBSHARE_PROXY_URL
-
     CUSTOM_USER_AGENT: str = os.getenv(
         "CUSTOM_USER_AGENT",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
