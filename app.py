@@ -26,11 +26,11 @@ from extractor import extract_media_info, download_media_file, MediaExtractionEr
 
 logger = logging.getLogger(__name__)
 
-# The AI routes are an optional extension. A missing extension dependency must
-# not prevent the core downloader API or Render health check from starting.
+# The AI routes are an optional extension. Missing or incompatible extension
+# imports must not prevent the core downloader API or health check from starting.
 try:
     from ai_agent.ai_routes import router as ai_router
-except ModuleNotFoundError as exc:
+except ImportError as exc:
     ai_router = None
     logger.warning("AI Backend Doctor routes are unavailable: %s", exc)
 
