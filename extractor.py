@@ -82,15 +82,18 @@ def _get_base_ydl_opts(is_youtube: bool = False) -> Dict[str, Any]:
         "retries": settings.YTDLP_RETRIES,
         "fragment_retries": settings.YTDLP_FRAGMENT_RETRIES,
         "sleep_interval_requests": settings.YTDLP_SLEEP_REQUESTS,
-        "concurrent_fragment_downloads": 1,
+        "concurrent_fragment_downloads": 4,
         "continuedl": True,
         "overwrites": True,
     }
 
-    # YouTube can rate-limit the server IP after repeated extraction requests.
-    # Keep direct connections lightweight by spacing extraction requests when using YouTube.
+    # Do not impose an artificial 0.75s delay on every YouTube request.
+    # The delay is configurable through YTDLP_SLEEP_REQUESTS; default is 0
+    # so normal downloads start immediately. YouTube rate-limit protection
+    # should be handled by the configured retry/sleep policy rather than by
+    # slowing every request unconditionally.
     if is_youtube:
-        opts["sleep_interval_requests"] = max(settings.YTDLP_SLEEP_REQUESTS, 0.75)
+        opts["sleep_interval_requests"] = settings.YTDLP_SLEEP_REQUESTS
 
     return opts
 
