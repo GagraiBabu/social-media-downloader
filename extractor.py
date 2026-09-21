@@ -290,7 +290,7 @@ def download_media_file(
     outtmpl = os.path.join(temp_dir, "%(title).100B.%(ext)s")
 
     is_youtube = (detected_platform or "").lower() == "youtube" or "youtube.com" in url.lower() or "youtu.be/" in url.lower()
-    opts = _get_base_ydl_opts(is_youtube=is_youtube)
+    opts = _get_base_ydl_opts(is_youtube=is_youtube, platform=detected_platform)
     opts.update({
         "format": format_selector,
         "outtmpl": outtmpl,
