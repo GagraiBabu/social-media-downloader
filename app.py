@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # imports must not prevent the core downloader API or health check from starting.
 try:
     from ai_agent.ai_routes import router as ai_router
-except ImportError as exc:
+except Exception as exc:
     ai_router = None
     logger.warning("AI Backend Doctor routes are unavailable: %s", exc)
 
