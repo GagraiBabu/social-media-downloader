@@ -347,6 +347,8 @@ def download_media_file(
 
     outtmpl = os.path.join(temp_dir, "%(title).100B.%(ext)s")
 
+    if (detected_platform or "").lower() == "facebook":
+        url = _resolve_facebook_share_url(url, _get_base_ydl_opts(platform=detected_platform))
     is_youtube = (detected_platform or "").lower() == "youtube" or "youtube.com" in url.lower() or "youtu.be/" in url.lower()
     opts = _get_base_ydl_opts(is_youtube=is_youtube, platform=detected_platform)
     opts.update({
