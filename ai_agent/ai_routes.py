@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from .agent import agent
 from .autofix import run_autofix
 from .config import settings
+from .jobs import create_job, get_job
 
 
 logger = logging.getLogger("ai_backend_doctor")
@@ -67,23 +68,21 @@ def ai_inspect(path: str, x_ai_admin_key: str | None = Header(default=None)):
         raise HTTPException(status_code=502, detail="File inspection failed") from exc
 
 
-@router.post("/run")
+@router.post("/run", status_code=202)
 def ai_run(payload: AutoFixRequest, x_ai_admin_key: str | None = Header(default=None)):
     verify_ai_access(x_ai_admin_key)
     if settings.GITHUB_BRANCH == "main":
         raise HTTPException(status_code=503, detail="AI agent refuses to modify main")
     try:
-        result = run_autofix(payload.request, payload.auto_apply)
+        job = create_job(payload.request, payload.auto_apply)
         return {
             "success": True,
-            "message": "AI agent run completed",
-            "result": result,
+            "message": "AI agent job queued",
+            "job": job,
         }
-    except TimeoutError as exc:
-        raise HTTPException(status_code=504, detail=str(exc)) from exc
     except Exception as exc:
-        logger.exception("AI autonomous run failed: %s", type(exc).__name__)
-        raise HTTPException(status_code=502, detail="AI autonomous run failed") from exc
+        logger.exception("AI autonomous job creation failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="AI autonomous job creation failed") from exc
 
 
 @router.get("/jobs/{job_id}")
