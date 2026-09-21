@@ -34,7 +34,10 @@ class Settings:
     TEMP_DIR: str = os.getenv("TEMP_DIR", "/tmp/social_media_downloader")
 
     # Decodo Residential Proxy. Explicit env var can disable it.
-    DECODO_PROXY_ENABLED: bool = os.getenv("DECODO_PROXY_ENABLED", "true").lower() in ("true", "1", "yes")
+    DECODO_PROXY_ENABLED: bool = os.getenv("DECODO_PROXY_ENABLED", "false").lower() in ("true", "1", "yes")
+    # Safety gate: keep Decodo fully off while the residential-proxy balance is exhausted.
+    # To re-enable later, explicitly set DECODO_PROXY_ALLOW=true and DECODO_PROXY_ENABLED=true.
+    DECODO_PROXY_ALLOW: bool = os.getenv("DECODO_PROXY_ALLOW", "false").lower() in ("true", "1", "yes")
     DECODO_HOST: str = os.getenv("DECODO_HOST", "gate.decodo.com")
     DECODO_PORT: int = int(os.getenv("DECODO_PORT", "7000"))
     DECODO_USERNAME: str = os.getenv("DECODO_USERNAME", "")
@@ -44,7 +47,7 @@ class Settings:
 
     @property
     def DECODO_PROXY_URL(self) -> str:
-        if not self.DECODO_PROXY_ENABLED:
+        if not self.DECODO_PROXY_ALLOW or not self.DECODO_PROXY_ENABLED:
             return ""
         if not self.DECODO_USERNAME or not self.DECODO_PASSWORD:
             return ""
