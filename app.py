@@ -8,6 +8,7 @@ import logging
 import os
 import shutil
 import time
+import mimetypes
 from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any
 
@@ -283,9 +284,11 @@ async def download_video_endpoint(payload: DownloadRequest, background_tasks: Ba
     # Register background cleanup task to delete temporary files once the file has been streamed
     background_tasks.add_task(_cleanup_temp_directory, temp_dir)
 
-    # Determine media type based on extension
+    # Determine media type from the actual output extension.
     ext = os.path.splitext(filepath)[1].lower()
-    media_type = "audio/mp4" if ext in (".m4a", ".aac") else ("audio/mpeg" if ext == ".mp3" else "video/mp4")
+    media_type = mimetypes.types_map.get(ext)
+    if not media_type:
+        media_type = "audio/mp4" if ext in (".m4a", ".aac") else ("audio/mpeg" if ext == ".mp3" else "application/octet-stream")
 
     return FileResponse(
         path=filepath,
