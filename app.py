@@ -202,7 +202,7 @@ async def health_check():
         version=settings.APP_VERSION,
         timestamp=time.time(),
         max_file_size_mb=settings.MAX_FILE_SIZE_MB,
-        proxy_enabled=bool(settings.DECODO_PROXY_URL),
+        proxy_enabled=bool(settings.WEBSHARE_PROXY_URL),
     )
 
 
