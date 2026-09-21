@@ -149,6 +149,19 @@ def _classify_ytdlp_error(error: Exception) -> MediaExtractionError:
             status_code=422
         )
 
+    if (
+        "tunnel connection failed: 400 bad request" in err_str
+        or "client_connect_invalid_params" in err_str
+        or "unable to connect to proxy" in err_str
+    ):
+        return MediaExtractionError(
+            "Webshare rejected the proxy connection parameters (HTTP 400). "
+            "The backend now uses the Webshare Endpoint Generator credentials exactly as configured. "
+            "Check that WEBSHARE_PROXY_URL contains the exact Endpoint Generator output, "
+            "or that WEBSHARE_USERNAME/WEBSHARE_PASSWORD match it exactly.",
+            status_code=502
+        )
+
     if "429" in err_str or "too many requests" in err_str:
         return MediaExtractionError(
             "The platform is rate-limiting the current network path (HTTP 429). Webshare proxy mode is active; please retry after the temporary rate limit clears.",
