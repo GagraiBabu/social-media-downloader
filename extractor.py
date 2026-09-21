@@ -68,9 +68,9 @@ def _build_format_selector(requested_quality: Optional[str] = None) -> str:
     return requested_quality
 
 
-def _get_base_ydl_opts() -> Dict[str, Any]:
+def _get_base_ydl_opts(is_youtube: bool = False) -> Dict[str, Any]:
     """Base yt-dlp options ensuring safety, non-interactive execution, and resource limits."""
-    return {
+    opts = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
@@ -94,6 +94,13 @@ def _get_base_ydl_opts() -> Dict[str, Any]:
         "continuedl": True,
         "overwrites": True,
     }
+
+    # YouTube can rate-limit the server IP after repeated extraction requests.
+    # Keep direct connections lightweight by spacing extraction requests when using YouTube.
+    if is_youtube:
+        opts["sleep_interval_requests"] = max(settings.YTDLP_SLEEP_REQUESTS, 0.75)
+
+    return opts
 
 
 def _classify_ytdlp_error(error: Exception) -> MediaExtractionError:
@@ -142,6 +149,12 @@ def _classify_ytdlp_error(error: Exception) -> MediaExtractionError:
             status_code=422
         )
 
+    if "429" in err_str or "too many requests" in err_str:
+        return MediaExtractionError(
+            "The platform is rate-limiting the server IP (HTTP 429). Direct connection is active; please retry after the temporary rate limit clears.",
+            status_code=429
+        )
+
     # General extractor or platform restriction error
     clean_msg = str(error).split("ERROR:")[-1].strip()
     return MediaExtractionError(
@@ -157,7 +170,8 @@ def extract_media_info(url: str, detected_platform: Optional[str] = None) -> Dic
     Returns structured dictionary with:
     - title, thumbnail, duration, uploader, platform, available_formats
     """
-    opts = _get_base_ydl_opts()
+    is_youtube = (detected_platform or "").lower() == "youtube" or "youtube.com" in url.lower() or "youtu.be/" in url.lower()
+    opts = _get_base_ydl_opts(is_youtube=is_youtube)
     opts["socket_timeout"] = settings.INFO_TIMEOUT_SECONDS
 
     try:
@@ -262,7 +276,8 @@ def download_media_file(
 
     outtmpl = os.path.join(temp_dir, "%(title).100B.%(ext)s")
 
-    opts = _get_base_ydl_opts()
+    is_youtube = (detected_platform or "").lower() == "youtube" or "youtube.com" in url.lower() or "youtu.be/" in url.lower()
+    opts = _get_base_ydl_opts(is_youtube=is_youtube)
     opts.update({
         "format": format_selector,
         "outtmpl": outtmpl,
