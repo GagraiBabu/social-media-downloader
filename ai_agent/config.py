@@ -15,7 +15,7 @@ class Settings:
     AI_TEST_VIDEO_URL = os.getenv("AI_TEST_VIDEO_URL", "https://www.youtube.com/watch?v=BaW_jenozKc")
     AI_TEST_DOWNLOAD_QUALITY = os.getenv("AI_TEST_DOWNLOAD_QUALITY", "1080p")
     AI_AGENT_DEEP_TESTS = os.getenv("AI_AGENT_DEEP_TESTS", "true").lower() in ("true", "1", "yes")
-    AI_AGENT_MAX_REPAIR_ATTEMPTS = max(1, min(3, int(os.getenv("AI_AGENT_MAX_REPAIR_ATTEMPTS", "3"))))
+    AI_AGENT_MAX_REPAIR_ATTEMPTS = max(1, min(5, int(os.getenv("AI_AGENT_MAX_REPAIR_ATTEMPTS", "5"))))
     AI_AGENT_HEALTH_TIMEOUT_SECONDS = max(5, int(os.getenv("AI_AGENT_HEALTH_TIMEOUT_SECONDS", "30")))
     AI_AGENT_INFO_TEST_TIMEOUT_SECONDS = max(15, int(os.getenv("AI_AGENT_INFO_TEST_TIMEOUT_SECONDS", "60")))
     AI_AGENT_DOWNLOAD_TEST_TIMEOUT_SECONDS = max(30, int(os.getenv("AI_AGENT_DOWNLOAD_TEST_TIMEOUT_SECONDS", "240")))
