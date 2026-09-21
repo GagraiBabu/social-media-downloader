@@ -58,10 +58,13 @@ class Settings:
         if not self.WEBSHARE_PROXY_ENABLED:
             return ""
 
-        # Prefer the explicit username/password variables when present.
-        # This avoids a stale or malformed raw URL overriding valid credentials.
-        # The username is used EXACTLY as supplied; no country/session/rotate
-        # suffix is added by the application.
+        # If the user supplied Webshare's complete Endpoint Generator URL,
+        # use it exactly as provided. This preserves provider-generated
+        # routing/session parameters.
+        if self.WEBSHARE_PROXY_URL_RAW:
+            return self.WEBSHARE_PROXY_URL_RAW
+
+        # Otherwise build the standard authenticated endpoint from credentials.
         if self.WEBSHARE_USERNAME and self.WEBSHARE_PASSWORD:
             from urllib.parse import quote
 
@@ -69,7 +72,6 @@ class Settings:
             password = quote(self.WEBSHARE_PASSWORD, safe="")
             host = self.WEBSHARE_HOST or "p.webshare.io"
             port = self.WEBSHARE_PORT or 80
-
             return f"http://{username}:{password}@{host}:{port}"
 
         return ""
