@@ -5,6 +5,7 @@ from fastapi import APIRouter, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
 from .agent import agent
+from .autofix import run_autofix
 from .config import settings
 
 
@@ -72,7 +73,7 @@ def ai_run(payload: AutoFixRequest, x_ai_admin_key: str | None = Header(default=
     if settings.GITHUB_BRANCH == "main":
         raise HTTPException(status_code=503, detail="AI agent refuses to modify main")
     try:
-        result = agent.run_autofix(payload.request, payload.auto_apply)
+        result = run_autofix(payload.request, payload.auto_apply)
         return {
             "success": True,
             "message": "AI agent run completed",
