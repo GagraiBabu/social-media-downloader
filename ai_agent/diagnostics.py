@@ -59,13 +59,19 @@ class Diagnostics:
 
         if deep:
             try:
-                report["api_tests"]["info"] = api_tester.info_test()
+                report["api_tests"]["default_info"] = api_tester.info_test()
             except Exception as exc:
                 report["errors"].append({"source": "api_info_test", "error": str(exc)})
+
             try:
-                report["api_tests"]["download"] = api_tester.download_test()
+                report["api_tests"]["default_download"] = api_tester.download_test()
             except Exception as exc:
                 report["errors"].append({"source": "api_download_test", "error": str(exc)})
+
+            try:
+                report["api_tests"]["platforms"] = api_tester.platform_tests()
+            except Exception as exc:
+                report["errors"].append({"source": "api_platform_tests", "error": str(exc)})
 
         report["summary"] = self._build_summary(report)
         return report
@@ -93,6 +99,13 @@ class Diagnostics:
             problems.append("Backend health check failed")
 
         for name, test in report.get("api_tests", {}).items():
+            if name == "platforms" and isinstance(test, dict):
+                if test.get("skipped"):
+                    problems.append(f"Platform tests skipped: {test.get('reason', 'not configured')}")
+                for platform_name, reason in (test.get("failed") or {}).items():
+                    problems.append(f"Platform {platform_name} test failed: {reason}")
+                continue
+
             if isinstance(test, dict) and not test.get("ok") and not test.get("skipped"):
                 reason = test.get("failure_reason") or test.get("error") or f"{name} test failed"
                 problems.append(f"API {name} test failed: {reason}")
