@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: social-media-downloader-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Webshare Residential Proxy
+      - key: WEBSHARE_PROXY_ENABLED
+        value: "true"
+      - key: WEBSHARE_HOST
+        value: p.webshare.io
+      - key: WEBSHARE_PORT
+        value: "80"
+      - key: WEBSHARE_COUNTRY
+        value: ""
+      - key: WEBSHARE_SESSION
+        value: ""
+      - key: WEBSHARE_ROTATE
+        value: "true"
+      - key: WEBSHARE_USERNAME
+        sync: false
+      - key: WEBSHARE_PASSWORD
+        sync: false
+
+      # App tuning
+      - key: MAX_CONCURRENT_JOBS
+        value: "1"
+      - key: YTDLP_RETRIES
+        value: "3"
+      - key: YTDLP_FRAGMENT_RETRIES
+        value: "3"
+      - key: UVICORN_LIMIT_CONCURRENCY
+        value: "16"
