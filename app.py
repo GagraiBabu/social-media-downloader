@@ -122,7 +122,7 @@ class FormatItem(BaseModel):
 class VideoInfoResponse(BaseModel):
     title: str
     thumbnail: Optional[str] = None
-    duration_seconds: Optional[int] = None
+    duration_seconds: Optional[float] = None
     uploader: Optional[str] = None
     uploader_url: Optional[str] = None
     platform: str
