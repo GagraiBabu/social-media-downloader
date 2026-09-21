@@ -60,7 +60,7 @@ def _build_format_selector(requested_quality: Optional[str] = None) -> str:
     return requested_quality
 
 
-def _get_base_ydl_opts(is_youtube: bool = False) -> Dict[str, Any]:
+def _get_base_ydl_opts(is_youtube: bool = False, platform: Optional[str] = None) -> Dict[str, Any]:
     """Base yt-dlp options ensuring safety, non-interactive execution, and resource limits."""
     opts = {
         "quiet": True,
@@ -86,6 +86,11 @@ def _get_base_ydl_opts(is_youtube: bool = False) -> Dict[str, Any]:
         "continuedl": True,
         "overwrites": True,
     }
+
+    # Facebook and Instagram increasingly apply browser/TLS fingerprinting.
+    # Use yt-dlp curl_cffi browser impersonation only for those platforms.
+    if (platform or "").lower() in {"facebook", "instagram"}:
+        opts["impersonate"] = os.getenv("YTDLP_SOCIAL_IMPERSONATE", "chrome")
 
     # Do not impose an artificial 0.75s delay on every YouTube request.
     # The delay is configurable through YTDLP_SLEEP_REQUESTS; default is 0
@@ -179,7 +184,7 @@ def extract_media_info(url: str, detected_platform: Optional[str] = None) -> Dic
     - title, thumbnail, duration, uploader, platform, available_formats
     """
     is_youtube = (detected_platform or "").lower() == "youtube" or "youtube.com" in url.lower() or "youtu.be/" in url.lower()
-    opts = _get_base_ydl_opts(is_youtube=is_youtube)
+    opts = _get_base_ydl_opts(is_youtube=is_youtube, platform=detected_platform)
     opts["socket_timeout"] = settings.INFO_TIMEOUT_SECONDS
 
     try:
