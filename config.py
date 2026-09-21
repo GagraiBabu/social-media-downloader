@@ -59,24 +59,37 @@ class Settings:
         """Build the Webshare HTTP proxy URL used by yt-dlp."""
         if not self.WEBSHARE_PROXY_ENABLED:
             return ""
-        if self.WEBSHARE_PROXY_URL_RAW:
-            return self.WEBSHARE_PROXY_URL_RAW
-        if not self.WEBSHARE_USERNAME or not self.WEBSHARE_PASSWORD:
-            return ""
-
+        # Prefer the official username/password fields when they are configured.
+        # This prevents a stale/malformed WEBSHARE_PROXY_URL from overriding valid
+        # Webshare credentials in Render.
         from urllib.parse import quote
-        username = self.WEBSHARE_USERNAME
-        if self.WEBSHARE_COUNTRY and f"-{self.WEBSHARE_COUNTRY}" not in username.lower():
-            username += f"-{self.WEBSHARE_COUNTRY}"
-        if self.WEBSHARE_SESSION:
-            username += f"-{self.WEBSHARE_SESSION}"
-        elif self.WEBSHARE_ROTATE and "-rotate" not in username.lower():
-            username += "-rotate"
+        if self.WEBSHARE_USERNAME and self.WEBSHARE_PASSWORD:
+            username = self.WEBSHARE_USERNAME
 
-        return (
+            # Country must be a 2-letter ISO code. Leave blank for worldwide/random.
+            country = self.WEBSHARE_COUNTRY
+            if len(country) == 2 and country.isalpha() and f"-{country}" not in username.lower():
+                username += f"-{country}"
+
+            # Webshare rotate is a username parameter, not a proxy hostname.
+            if self.WEBSHARE_SESSION:
+                session = self.WEBSHARE_SESSION
+                if session.isdigit():
+                    username += f"-{session}"
+            elif self.WEBSHARE_ROTATE and "-rotate" not in username.lower():
+                username += "-rotate"
+
+            return (
             f"http://{quote(username, safe='')}:{quote(self.WEBSHARE_PASSWORD, safe='')}"
             f"@{self.WEBSHARE_HOST}:{self.WEBSHARE_PORT}"
-        )
+            )
+
+        # Raw URL is only a fallback for deployments that do not provide
+        # separate Webshare username/password variables.
+        if self.WEBSHARE_PROXY_URL_RAW:
+            return self.WEBSHARE_PROXY_URL_RAW
+
+        return ""
 
     @property
     def WEBSHARE_PROXY_URL_BUILT(self) -> str:
