@@ -186,7 +186,7 @@ async def root():
         "redoc": "/redoc",
         "health": "/health",
         "supported_platforms": list(PLATFORM_PATTERNS.keys()),
-        "decodo_proxy_enabled": bool(settings.DECODO_PROXY_URL),
+        "webshare_proxy_enabled": bool(settings.WEBSHARE_PROXY_URL),
     }
 
 
