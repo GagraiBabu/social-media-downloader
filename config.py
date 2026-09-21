@@ -1,4 +1,4 @@
-"""
+""" 
 Configuration settings for Social Media Video Downloader backend.
 Uses environment variables with safe production defaults for Render deployment.
 """
@@ -26,7 +26,6 @@ class Settings:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS_RAW.split(",") if origin.strip()]
 
     # Resource Limits
-    # Render Free tier gives 512MB RAM; 100MB video max prevents Out-Of-Memory crashes
     MAX_FILE_SIZE_MB: int = int(os.getenv("MAX_FILE_SIZE_MB", "100"))
     MAX_FILE_SIZE_BYTES: int = MAX_FILE_SIZE_MB * 1024 * 1024
 
@@ -41,18 +40,14 @@ class Settings:
     # Temporary directory for file downloads
     TEMP_DIR: str = os.getenv("TEMP_DIR", "/tmp/social_media_downloader")
 
-    # -----------------------------------------------------------------------
     # Decodo Residential Proxy
-    # -----------------------------------------------------------------------
-    # Enable this to route yt-dlp extraction/download traffic through Decodo.
-    # Keep credentials in Render Environment Variables; never commit them.
-    DECODO_PROXY_ENABLED: bool = os.getenv("DECODO_PROXY_ENABLED", "false").lower() in ("true", "1", "yes")
+    # Explicit env var can still disable it. When credentials are present,
+    # enabling by default helps avoid platform IP rate-limits such as YouTube 429.
+    DECODO_PROXY_ENABLED: bool = os.getenv("DECODO_PROXY_ENABLED", "true").lower() in ("true", "1", "yes")
     DECODO_HOST: str = os.getenv("DECODO_HOST", "gate.decodo.com")
     DECODO_PORT: int = int(os.getenv("DECODO_PORT", "7000"))
     DECODO_USERNAME: str = os.getenv("DECODO_USERNAME", "")
     DECODO_PASSWORD: str = os.getenv("DECODO_PASSWORD", "")
-    # Optional targeting/session suffixes supported by Decodo.
-    # Example: country-in or session-my-session-id
     DECODO_COUNTRY: str = os.getenv("DECODO_COUNTRY", "").strip()
     DECODO_SESSION: str = os.getenv("DECODO_SESSION", "").strip()
 
@@ -74,7 +69,6 @@ class Settings:
             f"@{self.DECODO_HOST}:{self.DECODO_PORT}"
         )
 
-    # HTTP User-Agent for requests
     CUSTOM_USER_AGENT: str = os.getenv(
         "CUSTOM_USER_AGENT",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
