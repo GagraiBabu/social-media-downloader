@@ -33,7 +33,9 @@ class Settings:
 
     TEMP_DIR: str = os.getenv("TEMP_DIR", "/tmp/social_media_downloader")
 
-    # Decodo Residential Proxy. Explicit env var can disable it.
+    # Decodo Residential Proxy
+    # Safety default: proxy stays OFF while the residential-proxy balance is exhausted.
+    # Re-enable only after recharge by setting DECODO_PROXY_ALLOW=true and DECODO_PROXY_ENABLED=true.
     DECODO_PROXY_ENABLED: bool = os.getenv("DECODO_PROXY_ENABLED", "false").lower() in ("true", "1", "yes")
     # Safety gate: keep Decodo fully off while the residential-proxy balance is exhausted.
     # To re-enable later, explicitly set DECODO_PROXY_ALLOW=true and DECODO_PROXY_ENABLED=true.
