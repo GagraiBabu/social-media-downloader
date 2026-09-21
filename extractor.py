@@ -8,6 +8,8 @@ import os
 import glob
 import shutil
 import tempfile
+from urllib.parse import urlparse
+import requests
 from typing import Dict, Any, List, Optional, Tuple
 import yt_dlp
 from yt_dlp.utils import DownloadError, ExtractorError, UnsupportedError
@@ -176,6 +178,35 @@ def _classify_ytdlp_error(error: Exception) -> MediaExtractionError:
     )
 
 
+def _resolve_facebook_share_url(url: str, opts: Dict[str, Any]) -> str:
+    """Resolve Facebook share links to a canonical Facebook destination when possible."""
+    try:
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+        path = parsed.path.lower()
+        if not host.endswith("facebook.com") or not path.startswith("/share/"):
+            return url
+
+        kwargs = {
+            "headers": {"User-Agent": settings.CUSTOM_USER_AGENT},
+            "timeout": min(settings.INFO_TIMEOUT_SECONDS, 15),
+            "allow_redirects": True,
+        }
+        proxy = opts.get("proxy")
+        if proxy:
+            kwargs["proxies"] = {"http": proxy, "https": proxy}
+
+        response = requests.get(url, **kwargs)
+        final_url = response.url or url
+        final = urlparse(final_url)
+        final_host = final.netloc.lower()
+        if final_host.endswith("facebook.com") or final_host.endswith("fb.watch"):
+            return final_url
+    except Exception:
+        pass
+    return url
+
+
 def _extract_info_with_social_fallback(url: str, detected_platform: Optional[str], opts: Dict[str, Any], download: bool = False):
     """Try browser impersonation first, then a plain HTTP path."""
     attempts = [dict(opts)]
@@ -209,6 +240,8 @@ def extract_media_info(url: str, detected_platform: Optional[str] = None) -> Dic
     Returns structured dictionary with:
     - title, thumbnail, duration, uploader, platform, available_formats
     """
+    if (detected_platform or "").lower() == "facebook":
+        url = _resolve_facebook_share_url(url, _get_base_ydl_opts(platform=detected_platform))
     is_youtube = (detected_platform or "").lower() == "youtube" or "youtube.com" in url.lower() or "youtu.be/" in url.lower()
     opts = _get_base_ydl_opts(is_youtube=is_youtube, platform=detected_platform)
     opts["socket_timeout"] = settings.INFO_TIMEOUT_SECONDS
