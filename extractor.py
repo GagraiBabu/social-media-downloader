@@ -42,7 +42,7 @@ def _build_format_selector(requested_quality: Optional[str] = None) -> str:
             "bestvideo[height<=1080]+bestaudio/"
             "best[height<=1080][ext=mp4]/"
             "best[height<=1080]/"
-            "best"
+            "bestvideo[height<=1080]/"
         )
     
     q = requested_quality.lower().strip()
@@ -325,6 +325,23 @@ def download_media_file(
         f for f in glob.glob(os.path.join(temp_dir, "*"))
         if os.path.isfile(f) and not f.endswith(".part") and not f.endswith(".ytdl")
     ]
+
+    # A normal video request must never silently return an audio-only file.
+    # yt-dlp documents bestvideo+bestaudio as the explicit video+audio merge path.
+    wants_audio_only = (requested_quality or "").lower() in ("audio_only", "audio", "mp3", "m4a")
+    if not wants_audio_only:
+        video_files = [
+            f for f in downloaded_files
+            if os.path.splitext(f)[1].lower() in (".mp4", ".webm", ".mkv", ".mov", ".flv")
+        ]
+        if video_files:
+            downloaded_files = video_files
+        else:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise MediaExtractionError(
+                "Video download completed without a video file. The selected format was audio-only.",
+                status_code=502
+            )
 
     if not downloaded_files:
         shutil.rmtree(temp_dir, ignore_errors=True)
