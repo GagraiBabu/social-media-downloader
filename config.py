@@ -60,15 +60,10 @@ class Settings:
         if not self.WEBSHARE_PROXY_ENABLED:
             return ""
 
-        # If Webshare's Endpoint Generator output is supplied as a complete URL,
-        # use it verbatim. Do not rewrite its username/session parameters.
-        if self.WEBSHARE_PROXY_URL_RAW:
-            return self.WEBSHARE_PROXY_URL_RAW
-
-        # Otherwise build the standard HTTP endpoint from the exact username and
-        # password supplied by the deployment. The username is intentionally NOT
-        # modified here: Webshare's Endpoint Generator already encodes country,
-        # sticky/rotating session, city, ASN, etc. in the username.
+        # Prefer the explicit username/password variables when present.
+        # This avoids a stale or malformed raw URL overriding valid credentials.
+        # The username is used EXACTLY as supplied; no country/session/rotate
+        # suffix is added by the application.
         if self.WEBSHARE_USERNAME and self.WEBSHARE_PASSWORD:
             from urllib.parse import quote
 
