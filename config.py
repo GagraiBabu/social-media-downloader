@@ -40,36 +40,40 @@ class Settings:
     # Temporary directory for file downloads
     TEMP_DIR: str = os.getenv("TEMP_DIR", "/tmp/social_media_downloader")
 
-    # Decodo Residential Proxy
-    # Safety default: proxy stays OFF while the residential-proxy balance is exhausted.
-    # Re-enable only after recharge by setting DECODO_PROXY_ALLOW=true and DECODO_PROXY_ENABLED=true.
-    DECODO_PROXY_ENABLED: bool = os.getenv("DECODO_PROXY_ENABLED", "false").lower() in ("true", "1", "yes")
-    # Safety gate: keep Decodo fully off while the residential-proxy balance is exhausted.
-    # To re-enable later, explicitly set DECODO_PROXY_ALLOW=true and DECODO_PROXY_ENABLED=true.
-    DECODO_PROXY_ALLOW: bool = os.getenv("DECODO_PROXY_ALLOW", "false").lower() in ("true", "1", "yes")
-    DECODO_HOST: str = os.getenv("DECODO_HOST", "gate.decodo.com")
-    DECODO_PORT: int = int(os.getenv("DECODO_PORT", "7000"))
-    DECODO_USERNAME: str = os.getenv("DECODO_USERNAME", "")
-    DECODO_PASSWORD: str = os.getenv("DECODO_PASSWORD", "")
-    DECODO_COUNTRY: str = os.getenv("DECODO_COUNTRY", "").strip()
-    DECODO_SESSION: str = os.getenv("DECODO_SESSION", "").strip()
+    # Webshare Residential Proxy
+    # Webshare is the active proxy provider. Keep credentials in Render env vars only.
+    WEBSHARE_PROXY_ENABLED: bool = os.getenv("WEBSHARE_PROXY_ENABLED", "true").lower() in ("true", "1", "yes")
+    WEBSHARE_PROXY_URL: str = os.getenv("WEBSHARE_PROXY_URL", "").strip()
+    WEBSHARE_PROXY_HOST: str = os.getenv("WEBSHARE_PROXY_HOST", "p.webshare.io").strip()
+    WEBSHARE_PROXY_PORT: int = int(os.getenv("WEBSHARE_PROXY_PORT", "80"))
+    WEBSHARE_PROXY_USERNAME: str = os.getenv("WEBSHARE_PROXY_USERNAME", "").strip()
+    WEBSHARE_PROXY_PASSWORD: str = os.getenv("WEBSHARE_PROXY_PASSWORD", "")
+    WEBSHARE_COUNTRY: str = os.getenv("WEBSHARE_COUNTRY", "").strip().lower()
+    WEBSHARE_SESSION: str = os.getenv("WEBSHARE_SESSION", "").strip()
+    WEBSHARE_ROTATE: bool = os.getenv("WEBSHARE_ROTATE", "true").lower() in ("true", "1", "yes")
 
     @property
-    def DECODO_PROXY_URL(self) -> str:
-        """Build an authenticated Decodo HTTP proxy URL for yt-dlp."""
-        if not self.DECODO_PROXY_ALLOW or not self.DECODO_PROXY_ENABLED:
+    def WEBSHARE_PROXY_URL_BUILT(self) -> str:
+        """Build a Webshare HTTP proxy URL for yt-dlp without exposing credentials."""
+        if not self.WEBSHARE_PROXY_ENABLED:
             return ""
-        if not self.DECODO_USERNAME or not self.DECODO_PASSWORD:
+        if self.WEBSHARE_PROXY_URL:
+            return self.WEBSHARE_PROXY_URL
+        if not self.WEBSHARE_PROXY_USERNAME or not self.WEBSHARE_PROXY_PASSWORD:
             return ""
+
         from urllib.parse import quote
-        username = self.DECODO_USERNAME
-        if self.DECODO_COUNTRY:
-            username += f"-country-{self.DECODO_COUNTRY.lower()}"
-        if self.DECODO_SESSION:
-            username += f"-session-{self.DECODO_SESSION}"
+        username = self.WEBSHARE_PROXY_USERNAME
+        if self.WEBSHARE_COUNTRY and f"-{self.WEBSHARE_COUNTRY}" not in username.lower():
+            username += f"-{self.WEBSHARE_COUNTRY}"
+        if self.WEBSHARE_SESSION:
+            username += f"-{self.WEBSHARE_SESSION}"
+        elif self.WEBSHARE_ROTATE and "-rotate" not in username.lower():
+            username += "-rotate"
+
         return (
-            f"http://{quote(username, safe='')}:{quote(self.DECODO_PASSWORD, safe='')}"
-            f"@{self.DECODO_HOST}:{self.DECODO_PORT}"
+            f"http://{quote(username, safe='')}:{quote(self.WEBSHARE_PROXY_PASSWORD, safe='')}"
+            f"@{self.WEBSHARE_PROXY_HOST}:{self.WEBSHARE_PROXY_PORT}"
         )
 
     CUSTOM_USER_AGENT: str = os.getenv(
