@@ -36,14 +36,12 @@ def _build_format_selector(requested_quality: Optional[str] = None) -> str:
     - Prefer already compatible formats (mp4/m4a) to avoid server-side transcoding.
     """
     if not requested_quality or requested_quality.lower() in ("default", "1080p", "1080"):
-        # Select best video up to 1080p combined with best audio, or best pre-merged <= 1080p
-        return (
-            "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/"
-            "bestvideo[height<=1080]+bestaudio/"
-            "best[height<=1080][ext=mp4]/"
-            "best[height<=1080]/"
-            "bestvideo[height<=1080]/"
-        )
+        # Use yt-dlp's documented video-containing selector. The previous
+        # ext-specific chain could end up selecting an audio-only result on
+        # YouTube when the preferred MP4/M4A pair was unavailable.
+        # bv* guarantees the selected first format contains video; ba supplies
+        # audio when needed, with a combined video+audio fallback.
+        return "bv*[height<=1080]+ba/b[height<=1080]"
     
     q = requested_quality.lower().strip()
     if q in ("audio_only", "audio", "mp3", "m4a"):
@@ -56,13 +54,7 @@ def _build_format_selector(requested_quality: Optional[str] = None) -> str:
     digits = "".join(filter(str.isdigit, q))
     if digits:
         height = int(digits)
-        return (
-            f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/"
-            f"bestvideo[height<={height}]+bestaudio/"
-            f"best[height<={height}][ext=mp4]/"
-            f"best[height<={height}]/"
-            f"best"
-        )
+        return f"bv*[height<={height}]+ba/b[height<={height}]"
 
     # Specific format ID passed directly
     return requested_quality
