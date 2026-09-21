@@ -180,6 +180,13 @@ def _extract_info_with_social_fallback(url: str, detected_platform: Optional[str
     """Try browser impersonation first, then a plain HTTP path."""
     attempts = [dict(opts)]
     if (detected_platform or "").lower() in {"facebook", "instagram"} and opts.get("impersonate"):
+        # If the configured target is unavailable, let yt-dlp choose any
+        # installed curl_cffi target before falling back to plain HTTP.
+        any_target = dict(opts)
+        any_target["impersonate"] = True
+        if any_target["impersonate"] != opts.get("impersonate"):
+            attempts.append(any_target)
+
         fallback = dict(opts)
         fallback.pop("impersonate", None)
         attempts.append(fallback)
