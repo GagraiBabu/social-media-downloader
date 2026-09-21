@@ -43,41 +43,45 @@ class Settings:
 
     # -----------------------------------------------------------------------
     # Webshare Residential Proxy
-    # -----------------------------------------------------------------------
-    # Keep proxy credentials only in Render Environment Variables.
-    WEBSHARE_PROXY_ENABLED: bool = os.getenv("WEBSHARE_PROXY_ENABLED", "false").lower() in ("true", "1", "yes")
-    WEBSHARE_HOST: str = os.getenv("WEBSHARE_HOST", "p.webshare.io")
-    WEBSHARE_PORT: int = int(os.getenv("WEBSHARE_PORT", "80"))
-    WEBSHARE_USERNAME: str = os.getenv("WEBSHARE_USERNAME", "")
-    WEBSHARE_PASSWORD: str = os.getenv("WEBSHARE_PASSWORD", "")
+    # Credentials stay in Render Environment Variables and are never returned to clients.
+    WEBSHARE_PROXY_ENABLED: bool = os.getenv("WEBSHARE_PROXY_ENABLED", "true").lower() in ("true", "1", "yes")
+    WEBSHARE_PROXY_URL_RAW: str = os.getenv("WEBSHARE_PROXY_URL", "").strip()
+    WEBSHARE_HOST: str = os.getenv("WEBSHARE_HOST", os.getenv("WEBSHARE_PROXY_HOST", "p.webshare.io")).strip()
+    WEBSHARE_PORT: int = int(os.getenv("WEBSHARE_PORT", os.getenv("WEBSHARE_PROXY_PORT", "80")))
+    WEBSHARE_USERNAME: str = os.getenv("WEBSHARE_USERNAME", os.getenv("WEBSHARE_PROXY_USERNAME", "")).strip()
+    WEBSHARE_PASSWORD: str = os.getenv("WEBSHARE_PASSWORD", os.getenv("WEBSHARE_PROXY_PASSWORD", ""))
     WEBSHARE_COUNTRY: str = os.getenv("WEBSHARE_COUNTRY", "").strip().lower()
     WEBSHARE_SESSION: str = os.getenv("WEBSHARE_SESSION", "").strip()
     WEBSHARE_ROTATE: bool = os.getenv("WEBSHARE_ROTATE", "true").lower() in ("true", "1", "yes")
 
     @property
     def WEBSHARE_PROXY_URL(self) -> str:
-        """Build an authenticated Webshare HTTP proxy URL for yt-dlp."""
+        """Build the Webshare HTTP proxy URL used by yt-dlp."""
         if not self.WEBSHARE_PROXY_ENABLED:
             return ""
+        if self.WEBSHARE_PROXY_URL_RAW:
+            return self.WEBSHARE_PROXY_URL_RAW
         if not self.WEBSHARE_USERNAME or not self.WEBSHARE_PASSWORD:
             return ""
 
         from urllib.parse import quote
-
-        # Webshare supports username parameters for country targeting,
-        # sticky sessions, and rotating residential IPs.
         username = self.WEBSHARE_USERNAME
-        if self.WEBSHARE_COUNTRY:
+        if self.WEBSHARE_COUNTRY and f"-{self.WEBSHARE_COUNTRY}" not in username.lower():
             username += f"-{self.WEBSHARE_COUNTRY}"
         if self.WEBSHARE_SESSION:
             username += f"-{self.WEBSHARE_SESSION}"
-        elif self.WEBSHARE_ROTATE:
+        elif self.WEBSHARE_ROTATE and "-rotate" not in username.lower():
             username += "-rotate"
 
         return (
             f"http://{quote(username, safe='')}:{quote(self.WEBSHARE_PASSWORD, safe='')}"
             f"@{self.WEBSHARE_HOST}:{self.WEBSHARE_PORT}"
         )
+
+    @property
+    def WEBSHARE_PROXY_URL_BUILT(self) -> str:
+        """Backward-compatible alias for the Webshare proxy URL."""
+        return self.WEBSHARE_PROXY_URL
 
     # HTTP User-Agent for requests
     CUSTOM_USER_AGENT: str = os.getenv(
