@@ -706,12 +706,77 @@ def download_media_file(
         # while ensuring a requested video quality cannot collapse to audio-only.
         is_vk = (detected_platform or "").lower() == "vk"
         if is_vk:
+            # VK commonly exposes separate DASH video/audio formats. Build an
+            # explicit selector from the extracted format table so a generic
+            # "best" selector cannot accidentally resolve to audio-only.
+            requested_height = None
+            q = (requested_quality or "").lower().strip()
+            if q and q not in ("default", "best", "highest", "max"):
+                digits = "".join(filter(str.isdigit, q))
+                if digits:
+                    requested_height = int(digits)
+            if requested_height is None:
+                requested_height = 1080
+
+            vk_formats = info.get("formats", []) if isinstance(info, dict) else []
+            vk_video_formats = [
+                f for f in vk_formats
+                if f.get("format_id")
+                and f.get("vcodec") not in (None, "none")
+                and f.get("height")
+                and f.get("height") <= requested_height
+            ]
+            vk_audio_formats = [
+                f for f in vk_formats
+                if f.get("format_id")
+                and f.get("vcodec") in (None, "none")
+                and f.get("acodec") not in (None, "none")
+            ]
+            vk_combined_formats = [
+                f for f in vk_formats
+                if f.get("format_id")
+                and f.get("vcodec") not in (None, "none")
+                and f.get("acodec") not in (None, "none")
+                and f.get("height")
+                and f.get("height") <= requested_height
+            ]
+
+            def _vk_height_key(fmt):
+                return (
+                    fmt.get("height") or 0,
+                    fmt.get("tbr") or 0,
+                    fmt.get("filesize") or fmt.get("filesize_approx") or 0,
+                )
+
+            if vk_combined_formats:
+                selected_vk = max(vk_combined_formats, key=_vk_height_key)
+                vk_format_selector = selected_vk["format_id"]
+            elif vk_video_formats and vk_audio_formats:
+                selected_video = max(vk_video_formats, key=_vk_height_key)
+                selected_audio = max(
+                    vk_audio_formats,
+                    key=lambda f: (
+                        f.get("abr") or 0,
+                        f.get("tbr") or 0,
+                        f.get("filesize") or f.get("filesize_approx") or 0,
+                    ),
+                )
+                vk_format_selector = f'{selected_video["format_id"]}+{selected_audio["format_id"]}'
+            else:
+                raise MediaExtractionError(
+                    "VK did not expose a compatible video stream for the requested quality.",
+                    status_code=502
+                )
+
             vk_attempts = []
             if proxy_url and not settings.WEBSHARE_PROXY_MEDIA:
                 vk_direct_opts = dict(opts)
                 vk_direct_opts["proxy"] = ""
+                vk_direct_opts["format"] = vk_format_selector
                 vk_attempts.append(vk_direct_opts)
-            vk_attempts.append(dict(opts))
+            vk_proxy_opts = dict(opts)
+            vk_proxy_opts["format"] = vk_format_selector
+            vk_attempts.append(vk_proxy_opts)
 
             for vk_opts in vk_attempts:
                 try:
@@ -721,11 +786,12 @@ def download_media_file(
                     break
                 except Exception as vk_exc:
                     logging.getLogger(__name__).warning(
-                        "VK fresh download attempt failed: %r", vk_exc
+                        "VK explicit format download attempt failed: selector=%s error=%r",
+                        vk_format_selector, vk_exc
                     )
             if not downloaded_direct:
                 raise MediaExtractionError(
-                    "VK video stream download failed after fresh format selection.",
+                    "VK video stream download failed after explicit video/audio format selection.",
                     status_code=502
                 )
 
