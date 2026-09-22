@@ -33,8 +33,9 @@ class Settings:
     INFO_TIMEOUT_SECONDS: int = int(os.getenv("INFO_TIMEOUT_SECONDS", "30"))
     DOWNLOAD_TIMEOUT_SECONDS: int = int(os.getenv("DOWNLOAD_TIMEOUT_SECONDS", "180"))
     MAX_CONCURRENT_JOBS: int = max(1, int(os.getenv("MAX_CONCURRENT_JOBS", "1")))
-    YTDLP_RETRIES: int = max(0, int(os.getenv("YTDLP_RETRIES", "3")))
-    YTDLP_FRAGMENT_RETRIES: int = max(0, int(os.getenv("YTDLP_FRAGMENT_RETRIES", "3")))
+    # Keep proxy retries conservative because every retry can consume residential bandwidth.
+    YTDLP_RETRIES: int = max(0, int(os.getenv("YTDLP_RETRIES", "2")))
+    YTDLP_FRAGMENT_RETRIES: int = max(0, int(os.getenv("YTDLP_FRAGMENT_RETRIES", "1")))
     YTDLP_SLEEP_REQUESTS: float = max(0.0, float(os.getenv("YTDLP_SLEEP_REQUESTS", "0")))
 
     # Temporary directory for file downloads
@@ -51,6 +52,10 @@ class Settings:
     WEBSHARE_COUNTRY: str = os.getenv("WEBSHARE_COUNTRY", "").strip().lower()
     WEBSHARE_SESSION: str = os.getenv("WEBSHARE_SESSION", "").strip()
     WEBSHARE_ROTATE: bool = os.getenv("WEBSHARE_ROTATE", "true").lower() in ("true", "1", "yes")
+    # When false, use Webshare for page/metadata extraction but attempt the actual
+    # media transfer directly first. If direct media access fails, the downloader
+    # automatically falls back to Webshare so reliability is preserved.
+    WEBSHARE_PROXY_MEDIA: bool = os.getenv("WEBSHARE_PROXY_MEDIA", "false").lower() in ("true", "1", "yes")
 
     @property
     def WEBSHARE_PROXY_URL(self) -> str:
