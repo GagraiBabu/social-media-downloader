@@ -215,8 +215,56 @@ def _classify_ytdlp_error(error: Exception) -> MediaExtractionError:
     )
 
 
+def _facebook_url_from_html(html_text: str) -> Optional[str]:
+    """Extract a canonical/public Facebook media-page URL from share-page HTML."""
+    if not html_text:
+        return None
+
+    # Prefer canonical/og:url values because Facebook share pages commonly
+    # redirect through a generic page before exposing the real reel/video URL.
+    patterns = [
+        r'<link[^>]+rel=["\']canonical["\'][^>]+href=["\']([^"\']+)["\']',
+        r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:url["\']',
+        r'(?:"|\\\\/)https?://(?:www\\.|m\\.|web\\.)?facebook\\.com/(?:reel|watch|videos|story\\.php|permalink\\.php)/[^"\\\\< ]+',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, html_text, re.IGNORECASE)
+        if not match:
+            continue
+        candidate = match.group(1) if match.lastindex else match.group(0)
+        candidate = candidate.replace("\\\\/", "/").replace("\\/", "/").replace("&amp;", "&")
+        if candidate.startswith("http") and _is_facebook_media_page(candidate):
+            return candidate
+
+    return None
+
+
+def _is_facebook_media_page(url: str) -> bool:
+    """Return True only for Facebook URLs that can represent a media page."""
+    try:
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+        path = parsed.path.lower()
+        if not (host.endswith("facebook.com") or host.endswith("fb.watch")):
+            return False
+        if path.startswith("/share/"):
+            return False
+        return any(token in path for token in (
+            "/reel/", "/videos/", "/watch", "/story.php", "/permalink.php", "/photo.php"
+        ))
+    except Exception:
+        return False
+
+
 def _resolve_facebook_share_url(url: str, opts: Dict[str, Any]) -> str:
-    """Resolve Facebook share links while minimizing residential-proxy traffic."""
+    """Resolve Facebook share links before yt-dlp extraction.
+
+    Facebook currently redirects many /share/v/ and /share/r/ links to reel/video
+    pages, but the exact redirect can vary by client/network. Resolve the share
+    page explicitly first, then let yt-dlp handle the resulting media URL.
+    """
     try:
         parsed = urlparse(url)
         host = parsed.netloc.lower()
@@ -228,41 +276,63 @@ def _resolve_facebook_share_url(url: str, opts: Dict[str, Any]) -> str:
         if cached and time.monotonic() - cached[0] <= _INFO_CACHE_TTL_SECONDS:
             return cached[1]
 
-        base_kwargs = {
-            "headers": {"User-Agent": settings.CUSTOM_USER_AGENT},
-            "timeout": min(settings.INFO_TIMEOUT_SECONDS, 15),
-            "allow_redirects": True,
+        headers = {
+            "User-Agent": settings.CUSTOM_USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
         }
 
-        # A share-link redirect is small and often works directly. Try direct
-        # first so resolving the URL does not consume residential bandwidth.
-        try:
-            response = requests.get(url, **base_kwargs)
-            final_url = response.url or url
-            final = urlparse(final_url)
-            final_host = final.netloc.lower()
-            if final_host.endswith("facebook.com") or final_host.endswith("fb.watch"):
-                _SHARE_URL_CACHE[url] = (time.monotonic(), final_url)
+        def request_and_resolve(target_url: str, proxy: Optional[str] = None) -> Optional[str]:
+            kwargs = {
+                "headers": headers,
+                "timeout": min(settings.INFO_TIMEOUT_SECONDS, 15),
+                "allow_redirects": True,
+            }
+            if proxy:
+                kwargs["proxies"] = {"http": proxy, "https": proxy}
+            response = requests.get(target_url, **kwargs)
+            final_url = response.url or target_url
+            if _is_facebook_media_page(final_url):
                 return final_url
+            return _facebook_url_from_html(response.text)
+
+        # Direct resolution is preferred: the redirect is tiny and avoids
+        # spending residential bandwidth when Facebook allows it.
+        try:
+            resolved = request_and_resolve(url)
+            if resolved:
+                _SHARE_URL_CACHE[url] = (time.monotonic(), resolved)
+                return resolved
         except Exception:
             pass
 
-        # Only use Webshare for the redirect if direct resolution failed.
+        # Facebook sometimes serves different redirect HTML to the mobile
+        # hostname. Try it before consuming residential proxy bandwidth.
+        for mobile_host in ("m.facebook.com", "mbasic.facebook.com"):
+            try:
+                mobile_url = urlunparse(("https", mobile_host, parsed.path, parsed.params, parsed.query, ""))
+                resolved = request_and_resolve(mobile_url)
+                if resolved:
+                    _SHARE_URL_CACHE[url] = (time.monotonic(), resolved)
+                    return resolved
+            except Exception:
+                continue
+
+        # Last resort: resolve the small share page through Webshare.
         proxy = opts.get("proxy")
         if proxy:
-            proxy_kwargs = dict(base_kwargs)
-            proxy_kwargs["proxies"] = {"http": proxy, "https": proxy}
-            response = requests.get(url, **proxy_kwargs)
-            final_url = response.url or url
-            final = urlparse(final_url)
-            final_host = final.netloc.lower()
-            if final_host.endswith("facebook.com") or final_host.endswith("fb.watch"):
-                _SHARE_URL_CACHE[url] = (time.monotonic(), final_url)
-                return final_url
+            try:
+                resolved = request_and_resolve(url, proxy=proxy)
+                if resolved:
+                    _SHARE_URL_CACHE[url] = (time.monotonic(), resolved)
+                    return resolved
+            except Exception:
+                pass
     except Exception:
         pass
-    return url
 
+    return url
 
 def _extract_info_with_social_fallback(url: str, detected_platform: Optional[str], opts: Dict[str, Any], download: bool = False):
     """Try browser impersonation first, then a plain HTTP path."""
