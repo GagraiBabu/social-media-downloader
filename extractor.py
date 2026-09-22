@@ -396,8 +396,12 @@ def download_media_file(
                 downloaded_direct = False
 
         if not downloaded_direct:
+            # Reuse the already-extracted info instead of calling extract_info()
+            # again through Webshare. If the direct media URL needs the proxy,
+            # this downloads the same selected media through Webshare without
+            # repeating the platform-page/API extraction request.
             with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=True)
+                ydl.process_ie_result(info, download=True)
     except Exception as e:
         # If download failed, clean up the temporary directory immediately
         shutil.rmtree(temp_dir, ignore_errors=True)
