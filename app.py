@@ -23,6 +23,7 @@ from config import settings
 from security import validate_url_security
 from detector import detect_platform, normalize_url, PLATFORM_PATTERNS
 from extractor import extract_media_info, download_media_file, MediaExtractionError
+from hybrid_router import download_media_file_hybrid
 
 
 logger = logging.getLogger(__name__)
@@ -274,8 +275,9 @@ async def download_video_endpoint(payload: DownloadRequest, background_tasks: Ba
     platform, _, norm_url = detect_platform(payload.url)
 
     async with DOWNLOAD_SEMAPHORE:
+        download_fn = download_media_file_hybrid if settings.HYBRID_PROXY_ENABLED else download_media_file
         filepath, clean_filename, temp_dir = await run_in_threadpool(
-            download_media_file,
+            download_fn,
             norm_url,
             payload.quality or "1080p",
             platform,
