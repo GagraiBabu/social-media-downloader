@@ -57,7 +57,7 @@ app = FastAPI(
     description=(
         "Production-ready backend API for extracting and downloading social media videos "
         "from YouTube, Instagram, Facebook, TikTok, X (Twitter), Reddit, Pinterest, "
-        "Dailymotion, Moj, Snapchat, and Threads."
+        "Dailymotion, Moj, Snapchat, and LinkedIn."
     ),
     lifespan=lifespan,
     docs_url="/docs",
