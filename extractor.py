@@ -699,6 +699,36 @@ def download_media_file(
         downloaded_direct = False
         proxy_url = opts.get("proxy")
 
+        # VK can return DASH-style video/audio formats whose pre-extracted
+        # format list is not reliably re-selected by process_ie_result().
+        # For VK downloads, let yt-dlp perform a fresh format selection from
+        # the original page URL. This preserves the successful metadata path
+        # while ensuring a requested video quality cannot collapse to audio-only.
+        is_vk = (detected_platform or "").lower() == "vk"
+        if is_vk:
+            vk_attempts = []
+            if proxy_url and not settings.WEBSHARE_PROXY_MEDIA:
+                vk_direct_opts = dict(opts)
+                vk_direct_opts["proxy"] = ""
+                vk_attempts.append(vk_direct_opts)
+            vk_attempts.append(dict(opts))
+
+            for vk_opts in vk_attempts:
+                try:
+                    with yt_dlp.YoutubeDL(vk_opts) as ydl:
+                        ydl.download([url])
+                    downloaded_direct = True
+                    break
+                except Exception as vk_exc:
+                    logging.getLogger(__name__).warning(
+                        "VK fresh download attempt failed: %r", vk_exc
+                    )
+            if not downloaded_direct:
+                raise MediaExtractionError(
+                    "VK video stream download failed after fresh format selection.",
+                    status_code=502
+                )
+
         # yt-dlp's Facebook extractor may use browser impersonation during page
         # extraction, but the current yt-dlp/curl_cffi combination can assert
         # when a plain string target ("chrome") is passed to YoutubeDL() for
