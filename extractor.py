@@ -287,6 +287,24 @@ def _extract_info_with_social_fallback(url: str, detected_platform: Optional[str
         except Exception as exc:
             last_error = exc
 
+    # Facebook's native extractor is currently prone to `Cannot parse data`
+    # on public share/reel URLs even on recent yt-dlp builds. Try yt-dlp's
+    # generic extractor as a fallback. The generic extractor can follow the
+    # share redirect and read the public page's embedded media metadata
+    # without invoking the failing Facebook parser again.
+    if (detected_platform or "").lower() == "facebook":
+        generic_opts = dict(opts)
+        generic_opts.pop("impersonate", None)
+        generic_opts["force_generic_extractor"] = True
+        generic_opts["allowed_extractors"] = ["generic"]
+        try:
+            with yt_dlp.YoutubeDL(generic_opts) as ydl:
+                generic_info = ydl.extract_info(url, download=download)
+            if generic_info:
+                return generic_info
+        except Exception as exc:
+            last_error = exc
+
     raise last_error
 
 
