@@ -1,4 +1,4 @@
-"""
+""" 
 Configuration settings for Social Media Video Downloader backend.
 Uses environment variables with safe production defaults for Render deployment.
 """
@@ -26,7 +26,6 @@ class Settings:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS_RAW.split(",") if origin.strip()]
 
     # Resource Limits
-    # Render Free tier gives 512MB RAM; 100MB video max prevents Out-Of-Memory crashes
     MAX_FILE_SIZE_MB: int = int(os.getenv("MAX_FILE_SIZE_MB", "100"))
     MAX_FILE_SIZE_BYTES: int = MAX_FILE_SIZE_MB * 1024 * 1024
 
@@ -42,7 +41,6 @@ class Settings:
     # Temporary directory for file downloads
     TEMP_DIR: str = os.getenv("TEMP_DIR", "/tmp/social_media_downloader")
 
-    # -----------------------------------------------------------------------
     # Webshare Residential Proxy
     # Credentials stay in Render Environment Variables and are never returned to clients.
     WEBSHARE_PROXY_ENABLED: bool = os.getenv("WEBSHARE_PROXY_ENABLED", "true").lower() in ("true", "1", "yes")
@@ -54,8 +52,9 @@ class Settings:
     WEBSHARE_COUNTRY: str = os.getenv("WEBSHARE_COUNTRY", "").strip().lower()
     WEBSHARE_SESSION: str = os.getenv("WEBSHARE_SESSION", "").strip()
     WEBSHARE_ROTATE: bool = os.getenv("WEBSHARE_ROTATE", "true").lower() in ("true", "1", "yes")
-    # false = use Webshare for extraction/metadata, but try direct media transfer first.
-    # If direct media access fails, the downloader falls back to Webshare automatically.
+    # When false, use Webshare for page/metadata extraction but attempt the actual
+    # media transfer directly first. If direct media access fails, the downloader
+    # automatically falls back to Webshare so reliability is preserved.
     WEBSHARE_PROXY_MEDIA: bool = os.getenv("WEBSHARE_PROXY_MEDIA", "false").lower() in ("true", "1", "yes")
 
     @property
@@ -64,10 +63,13 @@ class Settings:
         if not self.WEBSHARE_PROXY_ENABLED:
             return ""
 
-        # Prefer the explicit username/password variables when present.
-        # This avoids a stale or malformed raw URL overriding valid credentials.
-        # The username is used EXACTLY as supplied; no country/session/rotate
-        # suffix is added by the application.
+        # If the user supplied Webshare's complete Endpoint Generator URL,
+        # use it exactly as provided. This preserves provider-generated
+        # routing/session parameters.
+        if self.WEBSHARE_PROXY_URL_RAW:
+            return self.WEBSHARE_PROXY_URL_RAW
+
+        # Otherwise build the standard authenticated endpoint from credentials.
         if self.WEBSHARE_USERNAME and self.WEBSHARE_PASSWORD:
             from urllib.parse import quote
 
@@ -75,7 +77,6 @@ class Settings:
             password = quote(self.WEBSHARE_PASSWORD, safe="")
             host = self.WEBSHARE_HOST or "p.webshare.io"
             port = self.WEBSHARE_PORT or 80
-
             return f"http://{username}:{password}@{host}:{port}"
 
         return ""
@@ -85,12 +86,6 @@ class Settings:
         """Backward-compatible alias for the Webshare proxy URL."""
         return self.WEBSHARE_PROXY_URL
 
-    @property
-    def WEBSHARE_PROXY_URL_BUILT(self) -> str:
-        """Backward-compatible alias for the Webshare proxy URL."""
-        return self.WEBSHARE_PROXY_URL
-
-    # HTTP User-Agent for requests
     CUSTOM_USER_AGENT: str = os.getenv(
         "CUSTOM_USER_AGENT",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
