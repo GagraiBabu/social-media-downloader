@@ -1,6 +1,6 @@
 """
 Platform detection and URL normalization module.
-Covers the 11 verified social media video platforms:
+Covers the 12 verified social media video platforms:
 1. YouTube
 2. Instagram
 3. Facebook
@@ -12,6 +12,7 @@ Covers the 11 verified social media video platforms:
 9. Moj
 10. Snapchat
 11. LinkedIn
+12. VK / VK Video
 """
 
 import re
@@ -161,6 +162,8 @@ def detect_platform(url: str) -> Tuple[Optional[str], bool, str]:
         "mojapp.in": "moj",
         "snapchat.com": "snapchat",
         "linkedin.com": "linkedin",
+        "vk.com": "vk",
+        "vkvideo.ru": "vk",
     }
 
     for domain_suffix, platform in host_map.items():
