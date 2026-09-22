@@ -9,8 +9,9 @@ import glob
 import shutil
 import tempfile
 import time
+import re
 from collections import OrderedDict
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 import requests
 from typing import Dict, Any, List, Optional, Tuple
 import yt_dlp
