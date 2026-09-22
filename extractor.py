@@ -12,6 +12,7 @@ import shutil
 import tempfile
 import time
 import re
+import html
 from collections import OrderedDict
 from urllib.parse import urlparse, urlunparse
 import requests
@@ -342,6 +343,128 @@ def _resolve_facebook_share_url(url: str, opts: Dict[str, Any]) -> str:
 
     return url
 
+
+def _resolve_pinterest_short_url(url: str, opts: Dict[str, Any]) -> Tuple[str, Optional[str]]:
+    """Resolve pin.it links and return (resolved_url, fetched_html)."""
+    try:
+        parsed = urlparse(url)
+        if parsed.netloc.lower() != "pin.it":
+            return url, None
+
+        headers = {
+            "User-Agent": settings.CUSTOM_USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
+        }
+        kwargs = {
+            "headers": headers,
+            "timeout": min(settings.INFO_TIMEOUT_SECONDS, 15),
+            "allow_redirects": True,
+        }
+        if opts.get("proxy"):
+            kwargs["proxies"] = {"http": opts["proxy"], "https": opts["proxy"]}
+
+        response = requests.get(url, **kwargs)
+        final_url = response.url or url
+        page = response.text or ""
+
+        candidates = [final_url]
+        patterns = [
+            r'<link[^>]+rel=["\']canonical["\'][^>]+href=["\']([^"\']+)["\']',
+            r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:url["\']',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, page, re.IGNORECASE)
+            if match:
+                candidates.append(html.unescape(match.group(1)))
+
+        for candidate in candidates:
+            if not candidate:
+                continue
+            candidate = candidate.replace("\\/", "/")
+            parsed_candidate = urlparse(candidate)
+            if "pinterest." in parsed_candidate.netloc.lower() and "/pin/" in parsed_candidate.path.lower():
+                return candidate, page
+
+        return final_url, page
+    except Exception as exc:
+        logging.getLogger(__name__).debug("Pinterest short-link resolution failed: %r", exc)
+        return url, None
+
+
+def _pinterest_html_fallback(url: str, opts: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Extract a public Pinterest video directly from pin-page HTML when the API is blocked."""
+    try:
+        resolved_url, page = _resolve_pinterest_short_url(url, opts)
+        if not page:
+            return None
+
+        page = html.unescape(page).replace("\\/", "/")
+        video_urls = []
+
+        meta_patterns = [
+            r'<meta[^>]+(?:property|name)=["\'](?:og:video(?::secure_url)?|twitter:player:stream)["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:video(?::secure_url)?|twitter:player:stream)["\']',
+        ]
+        for pattern in meta_patterns:
+            for match in re.finditer(pattern, page, re.IGNORECASE):
+                candidate = match.group(1)
+                if candidate.startswith(("http://", "https://")) and candidate not in video_urls:
+                    video_urls.append(candidate)
+
+        media_pattern = r'https?://[^"\'<>\s]+?\.(?:mp4|m3u8)(?:\?[^"\'<>\s]*)?'
+        for match in re.finditer(media_pattern, page, re.IGNORECASE):
+            candidate = match.group(0).replace("\\u0026", "&")
+            if candidate not in video_urls:
+                video_urls.append(candidate)
+
+        if not video_urls:
+            return None
+
+        title = None
+        title_match = re.search(
+            r'<meta[^>]+(?:property|name)=["\'](?:og:title|twitter:title)["\'][^>]+content=["\']([^"\']*)["\']',
+            page, re.IGNORECASE,
+        )
+        if title_match:
+            title = html.unescape(title_match.group(1)).strip()
+        if not title:
+            title_match = re.search(r"<title[^>]*>(.*?)</title>", page, re.IGNORECASE | re.DOTALL)
+            if title_match:
+                title = html.unescape(re.sub(r"\s+", " ", title_match.group(1))).strip()
+
+        pin_match = re.search(r"/pin/(?:[\w-]+--)?(\d+)", resolved_url or url, re.IGNORECASE)
+        video_id = pin_match.group(1) if pin_match else re.sub(r"\W+", "_", url.rsplit("/", 1)[-1]).strip("_")[:80]
+        formats = []
+        for index, media_url in enumerate(video_urls):
+            if ".m3u8" in media_url.lower():
+                formats.append({
+                    "format_id": f"pinterest-hls-{index}",
+                    "url": media_url,
+                    "ext": "mp4",
+                    "protocol": "m3u8_native",
+                })
+            else:
+                formats.append({
+                    "format_id": f"pinterest-cdn-{index}",
+                    "url": media_url,
+                    "ext": "mp4",
+                })
+
+        return {
+            "id": video_id,
+            "title": title or "Pinterest Video",
+            "formats": formats,
+            "webpage_url": resolved_url or url,
+            "extractor_key": "Pinterest",
+            "extractor": "Pinterest",
+        }
+    except Exception as exc:
+        logging.getLogger(__name__).debug("Pinterest HTML fallback failed: %r", exc)
+        return None
+
 def _extract_info_with_social_fallback(url: str, detected_platform: Optional[str], opts: Dict[str, Any], download: bool = False):
     """Try browser impersonation first, then a plain HTTP path."""
     attempts = [dict(opts)]
@@ -377,14 +500,21 @@ def extract_media_info(url: str, detected_platform: Optional[str] = None) -> Dic
     """
     if (detected_platform or "").lower() == "facebook":
         url = _resolve_facebook_share_url(url, _get_base_ydl_opts(platform=detected_platform))
+    is_pinterest = (detected_platform or "").lower() == "pinterest" or "pin.it/" in url.lower() or "pinterest." in url.lower()
     is_youtube = (detected_platform or "").lower() == "youtube" or "youtube.com" in url.lower() or "youtu.be/" in url.lower()
     opts = _get_base_ydl_opts(is_youtube=is_youtube, platform=detected_platform)
     opts["socket_timeout"] = settings.INFO_TIMEOUT_SECONDS
 
     try:
         info = _get_cached_info(url, detected_platform)
+        if info is None and is_pinterest:
+            resolved_url, _ = _resolve_pinterest_short_url(url, opts)
+            if resolved_url != url:
+                url = resolved_url
+            info = _pinterest_html_fallback(url, opts)
         if info is None:
             info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
+        if info is not None:
             _cache_info(url, detected_platform, info)
     except Exception as e:
         raise _classify_ytdlp_error(e)
@@ -510,6 +640,7 @@ def download_media_file(
 
     if (detected_platform or "").lower() == "facebook":
         url = _resolve_facebook_share_url(url, _get_base_ydl_opts(platform=detected_platform))
+    is_pinterest = (detected_platform or "").lower() == "pinterest" or "pin.it/" in url.lower() or "pinterest." in url.lower()
     is_youtube = (detected_platform or "").lower() == "youtube" or "youtube.com" in url.lower() or "youtu.be/" in url.lower()
     opts = _get_base_ydl_opts(is_youtube=is_youtube, platform=detected_platform)
     opts.update({
@@ -538,8 +669,14 @@ def download_media_file(
         # residential proxy on the protected platform request path without
         # forcing the large media payload through the proxy.
         info = _get_cached_info(url, detected_platform)
+        if info is None and is_pinterest:
+            resolved_url, _ = _resolve_pinterest_short_url(url, opts)
+            if resolved_url != url:
+                url = resolved_url
+            info = _pinterest_html_fallback(url, opts)
         if info is None:
             info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
+        if info is not None:
             _cache_info(url, detected_platform, info)
 
         # /api/info can legitimately return a transparent URL result from yt-dlp.
