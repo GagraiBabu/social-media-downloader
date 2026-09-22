@@ -373,7 +373,31 @@ def download_media_file(
     })
 
     try:
-        info = _extract_info_with_social_fallback(url, detected_platform, opts, download=True)
+        # First extract metadata/format URLs through Webshare. This keeps the
+        # residential proxy on the protected platform request path without
+        # forcing the large media payload through the proxy.
+        info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
+
+        downloaded_direct = False
+        proxy_url = opts.get("proxy")
+        if proxy_url and not settings.WEBSHARE_PROXY_MEDIA:
+            # yt-dlp supports an empty proxy value for a direct connection.
+            # Reuse the already-extracted info so we do not make a second
+            # platform-page request through the residential proxy.
+            direct_opts = dict(opts)
+            direct_opts["proxy"] = ""
+            try:
+                with yt_dlp.YoutubeDL(direct_opts) as ydl:
+                    ydl.process_ie_result(info, download=True)
+                downloaded_direct = True
+            except Exception:
+                # Some signed/geo-restricted media URLs require the same proxy
+                # used during extraction. Fall back to the reliable proxy path.
+                downloaded_direct = False
+
+        if not downloaded_direct:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
     except Exception as e:
         # If download failed, clean up the temporary directory immediately
         shutil.rmtree(temp_dir, ignore_errors=True)
