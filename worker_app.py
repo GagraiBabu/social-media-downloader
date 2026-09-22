@@ -1,10 +1,12 @@
 """Private worker API for Google Cloud Run / Compute Engine."""
 import os
+import shutil
 import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
@@ -60,4 +62,4 @@ async def internal_download(
         False,
     )
 
-    return FileResponse(filepath, filename=filename, media_type="video/mp4")
+    # The extractor creates a dedicated temp directory for each worker job.\n    # FileResponse streams the file after this handler returns, so cleanup must\n    # run as a response background task rather than in a finally block here.\n    cleanup = BackgroundTask(shutil.rmtree, _temp_dir, ignore_errors=True)\n    return FileResponse(\n        filepath,\n        filename=filename,\n        media_type="video/mp4",\n        background=cleanup,\n    )\n
