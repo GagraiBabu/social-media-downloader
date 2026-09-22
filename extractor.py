@@ -1,4 +1,5 @@
 import logging
+import traceback
 """
 Media extraction engine powered by yt-dlp.
 Provides real metadata inspection, format resolution, and safe file downloading
@@ -570,8 +571,14 @@ def download_media_file(
                     downloaded_direct = True
                 except Exception as direct_download_exc:
                     logging.getLogger(__name__).warning(
-                        "Direct media download failed; retrying with configured proxy: %r / %r",
+                        "Direct media download failed; retrying with configured proxy: %r / %r; info_type=%r extractor=%r formats=%d",
                         direct_exc, direct_download_exc,
+                        info.get("_type") if isinstance(info, dict) else None,
+                        info.get("extractor_key") if isinstance(info, dict) else None,
+                        len(info.get("formats", [])) if isinstance(info, dict) else 0,
+                    )
+                    logging.getLogger(__name__).warning(
+                        "Direct media download traceback:\n%s", traceback.format_exc()
                     )
                     downloaded_direct = False
 
@@ -592,7 +599,17 @@ def download_media_file(
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     ydl.process_ie_result(info, download=True)
     except Exception as e:
-        # If download failed, clean up the temporary directory immediately
+        # If download failed, clean up the temporary directory immediately.
+        logging.getLogger(__name__).warning(
+            "Media download exception type=%s repr=%r info_type=%r extractor=%r formats=%d",
+            e.__class__.__name__, e,
+            info.get("_type") if isinstance(info, dict) else None,
+            info.get("extractor_key") if isinstance(info, dict) else None,
+            len(info.get("formats", [])) if isinstance(info, dict) else 0,
+        )
+        logging.getLogger(__name__).warning(
+            "Media download traceback:\n%s", traceback.format_exc()
+        )
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise _classify_ytdlp_error(e)
 
