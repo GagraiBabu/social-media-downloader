@@ -27,6 +27,7 @@ from security import sanitize_filename
 _INFO_CACHE_TTL_SECONDS = 60
 _INFO_CACHE_MAX_ITEMS = 32
 _INFO_CACHE = OrderedDict()
+_SHARE_URL_CACHE = {}
 
 
 def _info_cache_key(url: str, detected_platform: Optional[str]) -> str:
@@ -215,7 +216,7 @@ def _classify_ytdlp_error(error: Exception) -> MediaExtractionError:
 
 
 def _resolve_facebook_share_url(url: str, opts: Dict[str, Any]) -> str:
-    """Resolve Facebook share links to a canonical Facebook destination when possible."""
+    """Resolve Facebook share links while minimizing residential-proxy traffic."""
     try:
         parsed = urlparse(url)
         host = parsed.netloc.lower()
@@ -223,21 +224,41 @@ def _resolve_facebook_share_url(url: str, opts: Dict[str, Any]) -> str:
         if not host.endswith("facebook.com") or not path.startswith("/share/"):
             return url
 
-        kwargs = {
+        cached = _SHARE_URL_CACHE.get(url)
+        if cached and time.monotonic() - cached[0] <= _INFO_CACHE_TTL_SECONDS:
+            return cached[1]
+
+        base_kwargs = {
             "headers": {"User-Agent": settings.CUSTOM_USER_AGENT},
             "timeout": min(settings.INFO_TIMEOUT_SECONDS, 15),
             "allow_redirects": True,
         }
+
+        # A share-link redirect is small and often works directly. Try direct
+        # first so resolving the URL does not consume residential bandwidth.
+        try:
+            response = requests.get(url, **base_kwargs)
+            final_url = response.url or url
+            final = urlparse(final_url)
+            final_host = final.netloc.lower()
+            if final_host.endswith("facebook.com") or final_host.endswith("fb.watch"):
+                _SHARE_URL_CACHE[url] = (time.monotonic(), final_url)
+                return final_url
+        except Exception:
+            pass
+
+        # Only use Webshare for the redirect if direct resolution failed.
         proxy = opts.get("proxy")
         if proxy:
-            kwargs["proxies"] = {"http": proxy, "https": proxy}
-
-        response = requests.get(url, **kwargs)
-        final_url = response.url or url
-        final = urlparse(final_url)
-        final_host = final.netloc.lower()
-        if final_host.endswith("facebook.com") or final_host.endswith("fb.watch"):
-            return final_url
+            proxy_kwargs = dict(base_kwargs)
+            proxy_kwargs["proxies"] = {"http": proxy, "https": proxy}
+            response = requests.get(url, **proxy_kwargs)
+            final_url = response.url or url
+            final = urlparse(final_url)
+            final_host = final.netloc.lower()
+            if final_host.endswith("facebook.com") or final_host.endswith("fb.watch"):
+                _SHARE_URL_CACHE[url] = (time.monotonic(), final_url)
+                return final_url
     except Exception:
         pass
     return url
