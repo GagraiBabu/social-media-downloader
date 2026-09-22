@@ -210,6 +210,11 @@ def _classify_ytdlp_error(error: Exception) -> MediaExtractionError:
 
     # General extractor or platform restriction error
     clean_msg = str(error).split("ERROR:")[-1].strip()
+    if not clean_msg:
+        clean_msg = repr(error) or error.__class__.__name__
+    logging.getLogger(__name__).warning(
+        "Media extraction failed (%s): %s", error.__class__.__name__, clean_msg
+    )
     return MediaExtractionError(
         f"Extraction failed: {clean_msg}",
         status_code=422
@@ -524,10 +529,20 @@ def download_media_file(
                 with yt_dlp.YoutubeDL(direct_opts) as ydl:
                     ydl.process_ie_result(info, download=True)
                 downloaded_direct = True
-            except Exception:
-                # Some signed/geo-restricted media URLs require the same proxy
-                # used during extraction. Fall back to the reliable proxy path.
-                downloaded_direct = False
+            except Exception as direct_exc:
+                # Some Facebook signed media URLs cannot be replayed from the
+                # cached extraction result. Re-run yt-dlp on the resolved media
+                # page directly, while keeping the media request off Webshare.
+                try:
+                    with yt_dlp.YoutubeDL(direct_opts) as ydl:
+                        ydl.download([url])
+                    downloaded_direct = True
+                except Exception as direct_download_exc:
+                    logging.getLogger(__name__).warning(
+                        "Direct media download failed; retrying with configured proxy: %r / %r",
+                        direct_exc, direct_download_exc,
+                    )
+                    downloaded_direct = False
 
         if not downloaded_direct:
             # Reuse the already-extracted info instead of calling extract_info()
