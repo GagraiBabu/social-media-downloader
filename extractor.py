@@ -8,6 +8,8 @@ import os
 import glob
 import shutil
 import tempfile
+import time
+from collections import OrderedDict
 from urllib.parse import urlparse
 import requests
 from typing import Dict, Any, List, Optional, Tuple
@@ -16,6 +18,40 @@ from yt_dlp.utils import DownloadError, ExtractorError, UnsupportedError
 
 from config import settings
 from security import sanitize_filename
+
+
+# Short-lived in-process metadata cache. The frontend commonly calls /api/info
+# immediately before /api/download for the same URL. Reusing the extracted
+# format info avoids a second residential-proxy page/API extraction request.
+# Media URLs remain short-lived; download fallback can re-extract when needed.
+_INFO_CACHE_TTL_SECONDS = 60
+_INFO_CACHE_MAX_ITEMS = 32
+_INFO_CACHE = OrderedDict()
+
+
+def _info_cache_key(url: str, detected_platform: Optional[str]) -> str:
+    return f"{(detected_platform or '').lower()}::{url}"
+
+
+def _get_cached_info(url: str, detected_platform: Optional[str]):
+    key = _info_cache_key(url, detected_platform)
+    item = _INFO_CACHE.get(key)
+    if not item:
+        return None
+    created_at, info = item
+    if time.monotonic() - created_at > _INFO_CACHE_TTL_SECONDS:
+        _INFO_CACHE.pop(key, None)
+        return None
+    _INFO_CACHE.move_to_end(key)
+    return info
+
+
+def _cache_info(url: str, detected_platform: Optional[str], info):
+    key = _info_cache_key(url, detected_platform)
+    _INFO_CACHE[key] = (time.monotonic(), info)
+    _INFO_CACHE.move_to_end(key)
+    while len(_INFO_CACHE) > _INFO_CACHE_MAX_ITEMS:
+        _INFO_CACHE.popitem(last=False)
 
 
 class MediaExtractionError(Exception):
@@ -247,7 +283,10 @@ def extract_media_info(url: str, detected_platform: Optional[str] = None) -> Dic
     opts["socket_timeout"] = settings.INFO_TIMEOUT_SECONDS
 
     try:
-        info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
+        info = _get_cached_info(url, detected_platform)
+        if info is None:
+            info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
+            _cache_info(url, detected_platform, info)
     except Exception as e:
         raise _classify_ytdlp_error(e)
 
@@ -376,7 +415,10 @@ def download_media_file(
         # First extract metadata/format URLs through Webshare. This keeps the
         # residential proxy on the protected platform request path without
         # forcing the large media payload through the proxy.
-        info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
+        info = _get_cached_info(url, detected_platform)
+        if info is None:
+            info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
+            _cache_info(url, detected_platform, info)
 
         downloaded_direct = False
         proxy_url = opts.get("proxy")
@@ -400,8 +442,17 @@ def download_media_file(
             # again through Webshare. If the direct media URL needs the proxy,
             # this downloads the same selected media through Webshare without
             # repeating the platform-page/API extraction request.
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                ydl.process_ie_result(info, download=True)
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    ydl.process_ie_result(info, download=True)
+            except Exception:
+                # Cached signed URLs can expire. Only in that case re-extract
+                # through Webshare and retry, preserving bandwidth savings for
+                # the normal path.
+                info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
+                _cache_info(url, detected_platform, info)
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    ydl.process_ie_result(info, download=True)
     except Exception as e:
         # If download failed, clean up the temporary directory immediately
         shutil.rmtree(temp_dir, ignore_errors=True)
