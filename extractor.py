@@ -633,7 +633,8 @@ def _resolve_download_info(url: str, detected_platform: Optional[str], opts: Dic
 def download_media_file(
     url: str,
     requested_quality: Optional[str] = None,
-    detected_platform: Optional[str] = None
+    detected_platform: Optional[str] = None,
+    allow_residential_fallback: bool = True
 ) -> Tuple[str, str, str]:
     """
     Downloads media to a dedicated temporary directory with safety limits.
@@ -836,6 +837,12 @@ def download_media_file(
                         "Direct media download traceback:\n%s", traceback.format_exc()
                     )
                     downloaded_direct = False
+
+        if not downloaded_direct and not allow_residential_fallback:
+            raise MediaExtractionError(
+                "Direct media download failed; hybrid router will try the next extraction layer.",
+                status_code=502,
+            )
 
         if not downloaded_direct:
             # Reuse the already-extracted info instead of calling extract_info()
