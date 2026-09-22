@@ -57,6 +57,14 @@ class Settings:
     # automatically falls back to Webshare so reliability is preserved.
     WEBSHARE_PROXY_MEDIA: bool = os.getenv("WEBSHARE_PROXY_MEDIA", "false").lower() in ("true", "1", "yes")
 
+    # Hybrid extraction workers. Disabled until both worker URLs and the shared token are configured.
+    HYBRID_PROXY_ENABLED: bool = os.getenv("HYBRID_PROXY_ENABLED", "false").lower() in ("true", "1", "yes")
+    HYBRID_CLOUD_RUN_URL: str = os.getenv("HYBRID_CLOUD_RUN_URL", "").strip().rstrip("/")
+    HYBRID_COMPUTE_ENGINE_URL: str = os.getenv("HYBRID_COMPUTE_ENGINE_URL", "").strip().rstrip("/")
+    HYBRID_WORKER_TOKEN: str = os.getenv("HYBRID_WORKER_TOKEN", "").strip()
+    HYBRID_CONNECT_TIMEOUT_SECONDS: int = int(os.getenv("HYBRID_CONNECT_TIMEOUT_SECONDS", "15"))
+    HYBRID_DOWNLOAD_TIMEOUT_SECONDS: int = int(os.getenv("HYBRID_DOWNLOAD_TIMEOUT_SECONDS", "240"))
+
     @property
     def WEBSHARE_PROXY_URL(self) -> str:
         """Return the exact Webshare endpoint configured by the deployment."""
