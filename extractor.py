@@ -8,12 +8,51 @@ import os
 import glob
 import shutil
 import tempfile
+import time
+from collections import OrderedDict
+from urllib.parse import urlparse
+import requests
 from typing import Dict, Any, List, Optional, Tuple
 import yt_dlp
 from yt_dlp.utils import DownloadError, ExtractorError, UnsupportedError
 
 from config import settings
 from security import sanitize_filename
+
+
+# Short-lived in-process metadata cache. The frontend commonly calls /api/info
+# immediately before /api/download for the same URL. Reusing the extracted
+# format info avoids a second residential-proxy page/API extraction request.
+# Media URLs remain short-lived; download fallback can re-extract when needed.
+_INFO_CACHE_TTL_SECONDS = 60
+_INFO_CACHE_MAX_ITEMS = 32
+_INFO_CACHE = OrderedDict()
+_SHARE_URL_CACHE = {}
+
+
+def _info_cache_key(url: str, detected_platform: Optional[str]) -> str:
+    return f"{(detected_platform or '').lower()}::{url}"
+
+
+def _get_cached_info(url: str, detected_platform: Optional[str]):
+    key = _info_cache_key(url, detected_platform)
+    item = _INFO_CACHE.get(key)
+    if not item:
+        return None
+    created_at, info = item
+    if time.monotonic() - created_at > _INFO_CACHE_TTL_SECONDS:
+        _INFO_CACHE.pop(key, None)
+        return None
+    _INFO_CACHE.move_to_end(key)
+    return info
+
+
+def _cache_info(url: str, detected_platform: Optional[str], info):
+    key = _info_cache_key(url, detected_platform)
+    _INFO_CACHE[key] = (time.monotonic(), info)
+    _INFO_CACHE.move_to_end(key)
+    while len(_INFO_CACHE) > _INFO_CACHE_MAX_ITEMS:
+        _INFO_CACHE.popitem(last=False)
 
 
 class MediaExtractionError(Exception):
@@ -36,14 +75,12 @@ def _build_format_selector(requested_quality: Optional[str] = None) -> str:
     - Prefer already compatible formats (mp4/m4a) to avoid server-side transcoding.
     """
     if not requested_quality or requested_quality.lower() in ("default", "1080p", "1080"):
-        # Select best video up to 1080p combined with best audio, or best pre-merged <= 1080p
-        return (
-            "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/"
-            "bestvideo[height<=1080]+bestaudio/"
-            "best[height<=1080][ext=mp4]/"
-            "best[height<=1080]/"
-            "best"
-        )
+        # Use yt-dlp's documented video-containing selector. The previous
+        # ext-specific chain could end up selecting an audio-only result on
+        # YouTube when the preferred MP4/M4A pair was unavailable.
+        # bv* guarantees the selected first format contains video; ba supplies
+        # audio when needed, with a combined video+audio fallback.
+        return "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b"
     
     q = requested_quality.lower().strip()
     if q in ("audio_only", "audio", "mp3", "m4a"):
@@ -56,19 +93,13 @@ def _build_format_selector(requested_quality: Optional[str] = None) -> str:
     digits = "".join(filter(str.isdigit, q))
     if digits:
         height = int(digits)
-        return (
-            f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/"
-            f"bestvideo[height<={height}]+bestaudio/"
-            f"best[height<={height}][ext=mp4]/"
-            f"best[height<={height}]/"
-            f"best"
-        )
+        return f"bv*[height<={height}]+ba/b[height<={height}]/bv*+ba/b"
 
     # Specific format ID passed directly
     return requested_quality
 
 
-def _get_base_ydl_opts(is_youtube: bool = False) -> Dict[str, Any]:
+def _get_base_ydl_opts(is_youtube: bool = False, platform: Optional[str] = None) -> Dict[str, Any]:
     """Base yt-dlp options ensuring safety, non-interactive execution, and resource limits."""
     opts = {
         "quiet": True,
@@ -90,15 +121,23 @@ def _get_base_ydl_opts(is_youtube: bool = False) -> Dict[str, Any]:
         "retries": settings.YTDLP_RETRIES,
         "fragment_retries": settings.YTDLP_FRAGMENT_RETRIES,
         "sleep_interval_requests": settings.YTDLP_SLEEP_REQUESTS,
-        "concurrent_fragment_downloads": 1,
+        "concurrent_fragment_downloads": 4,
         "continuedl": True,
         "overwrites": True,
     }
 
-    # YouTube can rate-limit the server IP after repeated extraction requests.
-    # Keep direct connections lightweight by spacing extraction requests when using YouTube.
+    # Facebook and Instagram increasingly apply browser/TLS fingerprinting.
+    # Use yt-dlp curl_cffi browser impersonation only for those platforms.
+    if (platform or "").lower() in {"facebook", "instagram"}:
+        opts["impersonate"] = os.getenv("YTDLP_SOCIAL_IMPERSONATE", "chrome")
+
+    # Do not impose an artificial 0.75s delay on every YouTube request.
+    # The delay is configurable through YTDLP_SLEEP_REQUESTS; default is 0
+    # so normal downloads start immediately. YouTube rate-limit protection
+    # should be handled by the configured retry/sleep policy rather than by
+    # slowing every request unconditionally.
     if is_youtube:
-        opts["sleep_interval_requests"] = max(settings.YTDLP_SLEEP_REQUESTS, 0.75)
+        opts["sleep_interval_requests"] = settings.YTDLP_SLEEP_REQUESTS
 
     return opts
 
@@ -156,7 +195,9 @@ def _classify_ytdlp_error(error: Exception) -> MediaExtractionError:
     ):
         return MediaExtractionError(
             "Webshare rejected the proxy connection parameters (HTTP 400). "
-            "Use the exact Webshare Endpoint Generator proxy URL or exact username/password.",
+            "The backend now uses the Webshare Endpoint Generator credentials exactly as configured. "
+            "Check that WEBSHARE_PROXY_URL contains the exact Endpoint Generator output, "
+            "or that WEBSHARE_USERNAME/WEBSHARE_PASSWORD match it exactly.",
             status_code=502
         )
 
@@ -174,6 +215,81 @@ def _classify_ytdlp_error(error: Exception) -> MediaExtractionError:
     )
 
 
+def _resolve_facebook_share_url(url: str, opts: Dict[str, Any]) -> str:
+    """Resolve Facebook share links while minimizing residential-proxy traffic."""
+    try:
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+        path = parsed.path.lower()
+        if not host.endswith("facebook.com") or not path.startswith("/share/"):
+            return url
+
+        cached = _SHARE_URL_CACHE.get(url)
+        if cached and time.monotonic() - cached[0] <= _INFO_CACHE_TTL_SECONDS:
+            return cached[1]
+
+        base_kwargs = {
+            "headers": {"User-Agent": settings.CUSTOM_USER_AGENT},
+            "timeout": min(settings.INFO_TIMEOUT_SECONDS, 15),
+            "allow_redirects": True,
+        }
+
+        # A share-link redirect is small and often works directly. Try direct
+        # first so resolving the URL does not consume residential bandwidth.
+        try:
+            response = requests.get(url, **base_kwargs)
+            final_url = response.url or url
+            final = urlparse(final_url)
+            final_host = final.netloc.lower()
+            if final_host.endswith("facebook.com") or final_host.endswith("fb.watch"):
+                _SHARE_URL_CACHE[url] = (time.monotonic(), final_url)
+                return final_url
+        except Exception:
+            pass
+
+        # Only use Webshare for the redirect if direct resolution failed.
+        proxy = opts.get("proxy")
+        if proxy:
+            proxy_kwargs = dict(base_kwargs)
+            proxy_kwargs["proxies"] = {"http": proxy, "https": proxy}
+            response = requests.get(url, **proxy_kwargs)
+            final_url = response.url or url
+            final = urlparse(final_url)
+            final_host = final.netloc.lower()
+            if final_host.endswith("facebook.com") or final_host.endswith("fb.watch"):
+                _SHARE_URL_CACHE[url] = (time.monotonic(), final_url)
+                return final_url
+    except Exception:
+        pass
+    return url
+
+
+def _extract_info_with_social_fallback(url: str, detected_platform: Optional[str], opts: Dict[str, Any], download: bool = False):
+    """Try browser impersonation first, then a plain HTTP path."""
+    attempts = [dict(opts)]
+    if (detected_platform or "").lower() in {"facebook", "instagram"} and opts.get("impersonate"):
+        # If the configured target is unavailable, let yt-dlp choose any
+        # installed curl_cffi target before falling back to plain HTTP.
+        any_target = dict(opts)
+        any_target["impersonate"] = True
+        if any_target["impersonate"] != opts.get("impersonate"):
+            attempts.append(any_target)
+
+        fallback = dict(opts)
+        fallback.pop("impersonate", None)
+        attempts.append(fallback)
+
+    last_error = None
+    for attempt in attempts:
+        try:
+            with yt_dlp.YoutubeDL(attempt) as ydl:
+                return ydl.extract_info(url, download=download)
+        except Exception as exc:
+            last_error = exc
+
+    raise last_error
+
+
 def extract_media_info(url: str, detected_platform: Optional[str] = None) -> Dict[str, Any]:
     """
     Extracts video metadata without downloading the media.
@@ -181,13 +297,17 @@ def extract_media_info(url: str, detected_platform: Optional[str] = None) -> Dic
     Returns structured dictionary with:
     - title, thumbnail, duration, uploader, platform, available_formats
     """
+    if (detected_platform or "").lower() == "facebook":
+        url = _resolve_facebook_share_url(url, _get_base_ydl_opts(platform=detected_platform))
     is_youtube = (detected_platform or "").lower() == "youtube" or "youtube.com" in url.lower() or "youtu.be/" in url.lower()
-    opts = _get_base_ydl_opts(is_youtube=is_youtube)
+    opts = _get_base_ydl_opts(is_youtube=is_youtube, platform=detected_platform)
     opts["socket_timeout"] = settings.INFO_TIMEOUT_SECONDS
 
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        info = _get_cached_info(url, detected_platform)
+        if info is None:
+            info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
+            _cache_info(url, detected_platform, info)
     except Exception as e:
         raise _classify_ytdlp_error(e)
 
@@ -287,8 +407,10 @@ def download_media_file(
 
     outtmpl = os.path.join(temp_dir, "%(title).100B.%(ext)s")
 
+    if (detected_platform or "").lower() == "facebook":
+        url = _resolve_facebook_share_url(url, _get_base_ydl_opts(platform=detected_platform))
     is_youtube = (detected_platform or "").lower() == "youtube" or "youtube.com" in url.lower() or "youtu.be/" in url.lower()
-    opts = _get_base_ydl_opts(is_youtube=is_youtube)
+    opts = _get_base_ydl_opts(is_youtube=is_youtube, platform=detected_platform)
     opts.update({
         "format": format_selector,
         "outtmpl": outtmpl,
@@ -311,8 +433,47 @@ def download_media_file(
     })
 
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+        # First extract metadata/format URLs through Webshare. This keeps the
+        # residential proxy on the protected platform request path without
+        # forcing the large media payload through the proxy.
+        info = _get_cached_info(url, detected_platform)
+        if info is None:
+            info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
+            _cache_info(url, detected_platform, info)
+
+        downloaded_direct = False
+        proxy_url = opts.get("proxy")
+        if proxy_url and not settings.WEBSHARE_PROXY_MEDIA:
+            # yt-dlp supports an empty proxy value for a direct connection.
+            # Reuse the already-extracted info so we do not make a second
+            # platform-page request through the residential proxy.
+            direct_opts = dict(opts)
+            direct_opts["proxy"] = ""
+            try:
+                with yt_dlp.YoutubeDL(direct_opts) as ydl:
+                    ydl.process_ie_result(info, download=True)
+                downloaded_direct = True
+            except Exception:
+                # Some signed/geo-restricted media URLs require the same proxy
+                # used during extraction. Fall back to the reliable proxy path.
+                downloaded_direct = False
+
+        if not downloaded_direct:
+            # Reuse the already-extracted info instead of calling extract_info()
+            # again through Webshare. If the direct media URL needs the proxy,
+            # this downloads the same selected media through Webshare without
+            # repeating the platform-page/API extraction request.
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    ydl.process_ie_result(info, download=True)
+            except Exception:
+                # Cached signed URLs can expire. Only in that case re-extract
+                # through Webshare and retry, preserving bandwidth savings for
+                # the normal path.
+                info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
+                _cache_info(url, detected_platform, info)
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    ydl.process_ie_result(info, download=True)
     except Exception as e:
         # If download failed, clean up the temporary directory immediately
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -323,6 +484,23 @@ def download_media_file(
         f for f in glob.glob(os.path.join(temp_dir, "*"))
         if os.path.isfile(f) and not f.endswith(".part") and not f.endswith(".ytdl")
     ]
+
+    # A normal video request must never silently return an audio-only file.
+    # yt-dlp documents bestvideo+bestaudio as the explicit video+audio merge path.
+    wants_audio_only = (requested_quality or "").lower() in ("audio_only", "audio", "mp3", "m4a")
+    if not wants_audio_only:
+        video_files = [
+            f for f in downloaded_files
+            if os.path.splitext(f)[1].lower() in (".mp4", ".webm", ".mkv", ".mov", ".flv")
+        ]
+        if video_files:
+            downloaded_files = video_files
+        else:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise MediaExtractionError(
+                "Video download completed without a video file. The selected format was audio-only.",
+                status_code=502
+            )
 
     if not downloaded_files:
         shutil.rmtree(temp_dir, ignore_errors=True)
