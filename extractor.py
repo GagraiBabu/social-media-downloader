@@ -549,11 +549,21 @@ def download_media_file(
 
         downloaded_direct = False
         proxy_url = opts.get("proxy")
+
+        # yt-dlp's Facebook extractor may use browser impersonation during page
+        # extraction, but the current yt-dlp/curl_cffi combination can assert
+        # when a plain string target ("chrome") is passed to YoutubeDL() for
+        # process_ie_result(). The media info already contains the final media
+        # formats, so do not pass the impersonation option into the actual
+        # media downloader. This avoids the AssertionError seen in Render.
+        media_opts = dict(opts)
+        media_opts.pop("impersonate", None)
+
         if proxy_url and not settings.WEBSHARE_PROXY_MEDIA:
             # yt-dlp supports an empty proxy value for a direct connection.
             # Reuse the already-extracted info so we do not make a second
             # platform-page request through the residential proxy.
-            direct_opts = dict(opts)
+            direct_opts = dict(media_opts)
             direct_opts["proxy"] = ""
             try:
                 with yt_dlp.YoutubeDL(direct_opts) as ydl:
@@ -588,15 +598,16 @@ def download_media_file(
             # this downloads the same selected media through Webshare without
             # repeating the platform-page/API extraction request.
             try:
-                with yt_dlp.YoutubeDL(opts) as ydl:
+                with yt_dlp.YoutubeDL(media_opts) as ydl:
                     ydl.process_ie_result(info, download=True)
             except Exception:
                 # Cached signed URLs can expire. Only in that case re-extract
                 # through Webshare and retry, preserving bandwidth savings for
                 # the normal path.
                 info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
+                info = _resolve_download_info(url, detected_platform, opts, info)
                 _cache_info(url, detected_platform, info)
-                with yt_dlp.YoutubeDL(opts) as ydl:
+                with yt_dlp.YoutubeDL(media_opts) as ydl:
                     ydl.process_ie_result(info, download=True)
     except Exception as e:
         # If download failed, clean up the temporary directory immediately.
