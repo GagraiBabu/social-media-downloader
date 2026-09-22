@@ -305,6 +305,16 @@ def _extract_info_with_social_fallback(url: str, detected_platform: Optional[str
         except Exception as exc:
             last_error = exc
 
+        # yt-dlp's generic extractor still hands Facebook redirects back to
+        # the broken native Facebook extractor. As a final public-content
+        # fallback, parse direct MP4 URLs from Facebook's HTML instead.
+        try:
+            html_info = _extract_facebook_html_media(url, opts)
+            if html_info:
+                return html_info
+        except Exception as exc:
+            last_error = exc
+
     raise last_error
 
 
