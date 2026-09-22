@@ -290,13 +290,14 @@ async def download_video_endpoint(payload: DownloadRequest, background_tasks: Ba
     if not media_type:
         media_type = "audio/mp4" if ext in (".m4a", ".aac") else ("audio/mpeg" if ext == ".mp3" else "application/octet-stream")
 
+    # Let Starlette generate Content-Disposition. Supplying our own header with a
+    # Unicode filename causes a latin-1 encoding failure in Starlette/Uvicorn.
     return FileResponse(
         path=filepath,
         filename=clean_filename,
         media_type=media_type,
         background=background_tasks,
         headers={
-            "Content-Disposition": f'attachment; filename="{clean_filename}"',
             "Cache-Control": "no-cache, no-store, must-revalidate",
         },
     )
