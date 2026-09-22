@@ -8,6 +8,7 @@ Order:
 
 Remote workers are opt-in and disabled unless configured.
 """
+import os
 import re
 import shutil
 import tempfile
