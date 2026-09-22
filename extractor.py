@@ -742,12 +742,33 @@ def download_media_file(
                     downloaded_direct = False
 
         if not downloaded_direct:
+            # Controlled residential-proxy fallback: if the Render/direct path
+            # is blocked, do not send the original high-quality media selection
+            # through Webshare. Use a lower resolution for the fallback so the
+            # residential quota is protected while keeping a working fallback.
+            #
+            # The direct path above is always attempted first. Explicitly lower
+            # requested qualities are preserved when they are already <= 480p;
+            # higher/default requests are capped at 480p only on the proxy path.
+            fallback_quality = (requested_quality or "default").lower().strip()
+            fallback_digits = "".join(filter(str.isdigit, fallback_quality))
+            requested_height = int(fallback_digits) if fallback_digits else 480
+            proxy_height = min(requested_height, 480)
+            if fallback_quality in ("default", "1080", "1080p", "best", "highest", "max"):
+                proxy_height = 480
+            proxy_fallback_selector = _build_format_selector(f"{proxy_height}p")
+
+            proxy_media_opts = dict(media_opts)
+            proxy_media_opts["format"] = proxy_fallback_selector
+            logging.getLogger(__name__).warning(
+                "Direct media path unavailable; using controlled Webshare fallback at <=%sp",
+                proxy_height,
+            )
+
             # Reuse the already-extracted info instead of calling extract_info()
-            # again through Webshare. If the direct media URL needs the proxy,
-            # this downloads the same selected media through Webshare without
-            # repeating the platform-page/API extraction request.
+            # again through Webshare. This saves one residential-proxy request.
             try:
-                with yt_dlp.YoutubeDL(media_opts) as ydl:
+                with yt_dlp.YoutubeDL(proxy_media_opts) as ydl:
                     ydl.process_ie_result(info, download=True)
             except Exception:
                 # Cached signed URLs can expire. Only in that case re-extract
@@ -756,7 +777,7 @@ def download_media_file(
                 info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
                 info = _resolve_download_info(url, detected_platform, opts, info)
                 _cache_info(url, detected_platform, info)
-                with yt_dlp.YoutubeDL(media_opts) as ydl:
+                with yt_dlp.YoutubeDL(proxy_media_opts) as ydl:
                     ydl.process_ie_result(info, download=True)
     except Exception as e:
         # If download failed, clean up the temporary directory immediately.
