@@ -319,6 +319,7 @@ def _extract_info_with_social_fallback(url: str, detected_platform: Optional[str
 
 
 
+
 def _extract_facebook_html_media(url: str, opts: Dict[str, Any]):
     """Extract public Facebook video URLs directly from the rendered HTML."""
     parsed = urlparse(url)
@@ -355,15 +356,11 @@ def _extract_facebook_html_media(url: str, opts: Dict[str, Any]):
     if response is None or not response.text:
         return None
 
-    html = response.text
     from html import unescape
-    import json
     import re
     from urllib.parse import unquote
 
-    # Facebook frequently HTML/JSON-escapes its media URLs. Normalize the
-    # common escaping layers before looking for direct MP4 sources.
-    normalized = unescape(html)
+    normalized = unescape(response.text)
     normalized = normalized.replace("\\/", "/")
     normalized = normalized.replace("\\u0025", "%").replace("\\u0026", "&")
     normalized = normalized.replace("\\u003D", "=").replace("\\u003d", "=")
@@ -372,7 +369,6 @@ def _extract_facebook_html_media(url: str, opts: Dict[str, Any]):
 
     candidates = []
 
-    # Known Facebook page-data fields.
     field_patterns = [
         r'"playable_url_quality_hd"\s*:\s*"([^"]+)"',
         r'"playable_url"\s*:\s*"([^"]+)"',
@@ -382,20 +378,17 @@ def _extract_facebook_html_media(url: str, opts: Dict[str, Any]):
         r'"browser_native_sd_url"\s*:\s*"([^"]+)"',
     ]
     for pattern in field_patterns:
-        for match in re.findall(pattern, normalized):
-            candidates.append(match)
+        candidates.extend(re.findall(pattern, normalized))
 
-    # OpenGraph can expose a direct video resource on public pages.
     meta_patterns = [
-        r'<meta[^>]+property=["\\']og:video(?::secure_url|:url)?["\\'][^>]+content=["\\']([^"\\']+)["\\']',
-        r'<meta[^>]+content=["\\']([^"\\']+)["\\'][^>]+property=["\\']og:video(?::secure_url|:url)?["\\']',
+        r"<meta[^>]+property=['\"]og:video(?::secure_url|:url)?['\"][^>]+content=['\"]([^'\"]+)['\"]",
+        r"<meta[^>]+content=['\"]([^'\"]+)['\"][^>]+property=['\"]og:video(?::secure_url|:url)?['\"]",
     ]
     for pattern in meta_patterns:
         candidates.extend(re.findall(pattern, normalized, flags=re.IGNORECASE))
 
-    # Last-resort scan for direct Facebook CDN MP4 URLs in the page source.
     candidates.extend(re.findall(
-        r'https?://[^"\'\s<>]+(?:fbcdn\.net|facebook\.com)[^"\'\s<>]+?\.mp4(?:\?[^"\'\s<>]*)?',
+        r"https?://[^\"'\s<>]+(?:fbcdn\.net|facebook\.com)[^\"'\s<>]+?\.mp4(?:\?[^\"'\s<>]*)?",
         normalized,
         flags=re.IGNORECASE,
     ))
@@ -403,7 +396,7 @@ def _extract_facebook_html_media(url: str, opts: Dict[str, Any]):
     cleaned = []
     seen = set()
     for candidate in candidates:
-        candidate = candidate.replace("\\\"", '"').strip()
+        candidate = candidate.replace('\\"', '"').strip()
         if candidate.startswith("http") and ".mp4" in candidate.lower() and candidate not in seen:
             seen.add(candidate)
             cleaned.append(candidate)
@@ -411,8 +404,6 @@ def _extract_facebook_html_media(url: str, opts: Dict[str, Any]):
     if not cleaned:
         return None
 
-    # Prefer HD-looking sources; keep the first few unique sources so the
-    # normal quality selector can choose among them when Facebook exposes both.
     def _score(u):
         low = u.lower()
         return (
@@ -423,20 +414,20 @@ def _extract_facebook_html_media(url: str, opts: Dict[str, Any]):
     cleaned.sort(key=_score, reverse=True)
 
     title_match = re.search(
-        r'<meta[^>]+property=["\\']og:title["\\'][^>]+content=["\\']([^"\\']+)["\\']',
+        r"<meta[^>]+property=['\"]og:title['\"][^>]+content=['\"]([^'\"]+)['\"]",
         normalized,
         flags=re.IGNORECASE,
     )
     if not title_match:
         title_match = re.search(
-            r'<title[^>]*>(.*?)</title>',
+            r"<title[^>]*>(.*?)</title>",
             normalized,
             flags=re.IGNORECASE | re.DOTALL,
         )
     title = unescape(title_match.group(1)).strip() if title_match else "Facebook Video"
 
     thumb_match = re.search(
-        r'<meta[^>]+property=["\\']og:image["\\'][^>]+content=["\\']([^"\\']+)["\\']',
+        r"<meta[^>]+property=['\"]og:image['\"][^>]+content=['\"]([^'\"]+)['\"]",
         normalized,
         flags=re.IGNORECASE,
     )
@@ -454,9 +445,9 @@ def _extract_facebook_html_media(url: str, opts: Dict[str, Any]):
             "acodec": "unknown",
         })
 
+    video_id_match = re.search(r"(?:/videos/|/reel/|[?&]v=)(\d+)", response.url or url)
     return {
-        "id": re.search(r'(?:/videos/|/reel/|[?&]v=)(\d+)', response.url or url).group(1)
-        if re.search(r'(?:/videos/|/reel/|[?&]v=)(\d+)', response.url or url) else None,
+        "id": video_id_match.group(1) if video_id_match else None,
         "title": title,
         "thumbnail": thumbnail,
         "webpage_url": response.url or url,
@@ -465,7 +456,6 @@ def _extract_facebook_html_media(url: str, opts: Dict[str, Any]):
         "url": cleaned[0],
         "_facebook_html_fallback": True,
     }
-
 
 def extract_media_info(url: str, detected_platform: Optional[str] = None) -> Dict[str, Any]:
     """
