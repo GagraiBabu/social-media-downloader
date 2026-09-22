@@ -464,6 +464,29 @@ def extract_media_info(url: str, detected_platform: Optional[str] = None) -> Dic
     }
 
 
+def _resolve_download_info(url: str, detected_platform: Optional[str], opts: Dict[str, Any], info=None):
+    """Resolve yt-dlp transparent URL results into a final video info dict."""
+    current = info
+    for _ in range(3):
+        if not isinstance(current, dict):
+            break
+        result_type = current.get("_type", "video")
+        if result_type == "video":
+            return current
+        nested_url = current.get("url")
+        if result_type not in {"url", "url_transparent"} or not nested_url:
+            break
+        current_url = nested_url
+        nested_opts = dict(opts)
+        nested_opts.pop("format", None)
+        with yt_dlp.YoutubeDL(nested_opts) as ydl:
+            current = ydl.extract_info(current_url, download=False)
+    if isinstance(current, dict) and current.get("_type", "video") == "video":
+        return current
+    raise AssertionError(
+        f"yt-dlp returned non-video result type: {current.get('_type') if isinstance(current, dict) else type(current).__name__}"
+    )
+
 def download_media_file(
     url: str,
     requested_quality: Optional[str] = None,
@@ -518,6 +541,11 @@ def download_media_file(
             info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
             _cache_info(url, detected_platform, info)
 
+        # /api/info can legitimately return a transparent URL result from yt-dlp.
+        # process_ie_result() expects a final video result, so resolve that chain
+        # explicitly before attempting the file download.
+        info = _resolve_download_info(url, detected_platform, opts, info)
+
         downloaded_direct = False
         proxy_url = opts.get("proxy")
         if proxy_url and not settings.WEBSHARE_PROXY_MEDIA:
@@ -535,8 +563,10 @@ def download_media_file(
                 # cached extraction result. Re-run yt-dlp on the resolved media
                 # page directly, while keeping the media request off Webshare.
                 try:
+                    refreshed = _extract_info_with_social_fallback(url, detected_platform, direct_opts, download=False)
+                    refreshed = _resolve_download_info(url, detected_platform, direct_opts, refreshed)
                     with yt_dlp.YoutubeDL(direct_opts) as ydl:
-                        ydl.download([url])
+                        ydl.process_ie_result(refreshed, download=True)
                     downloaded_direct = True
                 except Exception as direct_download_exc:
                     logging.getLogger(__name__).warning(
