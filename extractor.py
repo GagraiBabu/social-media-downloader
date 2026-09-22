@@ -1,3 +1,4 @@
+import logging
 """
 Media extraction engine powered by yt-dlp.
 Provides real metadata inspection, format resolution, and safe file downloading
