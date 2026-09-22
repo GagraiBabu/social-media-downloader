@@ -1,6 +1,6 @@
 """
 Platform detection and URL normalization module.
-Covers the 11 supported social media video platforms:
+Covers the 11 verified social media video platforms:
 1. YouTube
 2. Instagram
 3. Facebook
@@ -11,7 +11,7 @@ Covers the 11 supported social media video platforms:
 8. Dailymotion
 9. Moj
 10. Snapchat
-11. Threads
+11. LinkedIn
 """
 
 import re
@@ -62,8 +62,9 @@ PLATFORM_PATTERNS = {
     "snapchat": [
         r"^(https?://)?(www\.)?snapchat\.com/(spotlight|add|s)/([\w\-]+)",
     ],
-    "threads": [
-        r"^(https?://)?(www\.)?threads\.net/@[\w.\-]+/post/([\w\-]+)",
+    "linkedin": [
+        r"^(https?://)?(www\.)?linkedin\.com/(posts|feed/update)/[\w.\-]+",
+        r"^(https?://)?(www\.)?linkedin\.com/posts/[\w.\-]+_[\w\-]+-[\w\-]+",
     ],
 }
 
@@ -159,7 +160,7 @@ def detect_platform(url: str) -> Tuple[Optional[str], bool, str]:
         "dai.ly": "dailymotion",
         "mojapp.in": "moj",
         "snapchat.com": "snapchat",
-        "threads.net": "threads",
+        "linkedin.com": "linkedin",
     }
 
     for domain_suffix, platform in host_map.items():
