@@ -15,10 +15,16 @@ class Settings:
     AI_AGENT_TEST_URL = os.getenv("AI_AGENT_TEST_URL", "")
     AI_TEST_VIDEO_URL = os.getenv("AI_TEST_VIDEO_URL", "https://www.youtube.com/watch?v=BaW_jenozKc")
     AI_TEST_DOWNLOAD_QUALITY = os.getenv("AI_TEST_DOWNLOAD_QUALITY", "1080p")
-    AI_DOWNLOAD_TEST_PLATFORMS = os.getenv("AI_DOWNLOAD_TEST_PLATFORMS", "facebook,instagram")
+    # Confirmed 11-platform smoke-test set. Override through Render env vars if a
+    # platform test URL expires or needs replacement; do not change core downloader
+    # behavior just to refresh a test URL.
+    AI_DOWNLOAD_TEST_PLATFORMS = os.getenv(
+        "AI_DOWNLOAD_TEST_PLATFORMS",
+        "youtube,instagram,facebook,pinterest,moj,tiktok,x_twitter,reddit,snapchat,dailymotion,linkedin",
+    )
     AI_PLATFORM_TEST_URLS_RAW = os.getenv(
         "AI_PLATFORM_TEST_URLS",
-        '{"instagram":"https://www.instagram.com/reel/DcbIMbLP35E/","facebook":"https://www.facebook.com/share/v/18VR2oCjGY/"}',
+        '{"youtube":"https://youtu.be/CMrxWnQxT94?si=qYdlitYqAMvw9D7L","instagram":"https://www.instagram.com/reel/DcbIMbLP35E/?stkn=cDRuaTI2ZGlkYzE2","facebook":"https://www.facebook.com/share/v/1896iFuYNG/","pinterest":"https://in.pinterest.com/pin/1-video--1008454541538180803/","moj":"https://mojapp.in/@95184416561/video/3935202957?referrer=WxtUYb-1buuaBh","tiktok":"https://www.tiktok.com/@scout2015/video/6718335390845095173","x_twitter":"https://x.com/stillmomentss/status/2102199058979000447?s=20","reddit":"https://www.reddit.com/r/cringereels/s/re4lh5qq3N","snapchat":"https://www.snapchat.com/spotlight/W7_EDlXWTBiXAEEniNoMPwAAYcXpzc2t0Znh1AaCMwrDiAaCMwrDHAAAAAQ?ref=web_spotlight","dailymotion":"https://www.dailymotion.com/video/xbbdewu","linkedin":"https://www.linkedin.com/posts/mamamia-com-au_could-you-have-wellbeing-burnout-activity-7250641346867126272-dGNc?utm_source=li_share&utm_content=feedcontent&utm_medium=g_mb_web&utm_campaign=copy"}',
     )
     AI_AGENT_DEEP_TESTS = os.getenv("AI_AGENT_DEEP_TESTS", "true").lower() in ("true", "1", "yes")
     AI_AGENT_MAX_REPAIR_ATTEMPTS = max(5, min(15, int(os.getenv("AI_AGENT_MAX_REPAIR_ATTEMPTS", "15"))))
