@@ -62,4 +62,13 @@ async def internal_download(
         False,
     )
 
-    # The extractor creates a dedicated temp directory for each worker job.\n    # FileResponse streams the file after this handler returns, so cleanup must\n    # run as a response background task rather than in a finally block here.\n    cleanup = BackgroundTask(shutil.rmtree, _temp_dir, ignore_errors=True)\n    return FileResponse(\n        filepath,\n        filename=filename,\n        media_type="video/mp4",\n        background=cleanup,\n    )\n
+    # The extractor creates a dedicated temp directory for each worker job.
+    # FileResponse streams the file after this handler returns, so cleanup must
+    # run as a response background task rather than in a finally block here.
+    cleanup = BackgroundTask(shutil.rmtree, _temp_dir, ignore_errors=True)
+    return FileResponse(
+        filepath,
+        filename=filename,
+        media_type="video/mp4",
+        background=cleanup,
+    )
