@@ -1,3 +1,5 @@
+import logging
+import traceback
 """
 Media extraction engine powered by yt-dlp.
 Provides real metadata inspection, format resolution, and safe file downloading
@@ -9,8 +11,10 @@ import glob
 import shutil
 import tempfile
 import time
+import re
+import html
 from collections import OrderedDict
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 import requests
 from typing import Dict, Any, List, Optional, Tuple
 import yt_dlp
@@ -209,14 +213,67 @@ def _classify_ytdlp_error(error: Exception) -> MediaExtractionError:
 
     # General extractor or platform restriction error
     clean_msg = str(error).split("ERROR:")[-1].strip()
+    if not clean_msg:
+        clean_msg = repr(error) or error.__class__.__name__
+    logging.getLogger(__name__).warning(
+        "Media extraction failed (%s): %s", error.__class__.__name__, clean_msg
+    )
     return MediaExtractionError(
         f"Extraction failed: {clean_msg}",
         status_code=422
     )
 
 
+def _facebook_url_from_html(html_text: str) -> Optional[str]:
+    """Extract a canonical/public Facebook media-page URL from share-page HTML."""
+    if not html_text:
+        return None
+
+    # Prefer canonical/og:url values because Facebook share pages commonly
+    # redirect through a generic page before exposing the real reel/video URL.
+    patterns = [
+        r'<link[^>]+rel=["\']canonical["\'][^>]+href=["\']([^"\']+)["\']',
+        r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:url["\']',
+        r'(?:"|\\\\/)https?://(?:www\\.|m\\.|web\\.)?facebook\\.com/(?:reel|watch|videos|story\\.php|permalink\\.php)/[^"\\\\< ]+',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, html_text, re.IGNORECASE)
+        if not match:
+            continue
+        candidate = match.group(1) if match.lastindex else match.group(0)
+        candidate = candidate.replace("\\\\/", "/").replace("\\/", "/").replace("&amp;", "&")
+        if candidate.startswith("http") and _is_facebook_media_page(candidate):
+            return candidate
+
+    return None
+
+
+def _is_facebook_media_page(url: str) -> bool:
+    """Return True only for Facebook URLs that can represent a media page."""
+    try:
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+        path = parsed.path.lower()
+        if not (host.endswith("facebook.com") or host.endswith("fb.watch")):
+            return False
+        if path.startswith("/share/"):
+            return False
+        return any(token in path for token in (
+            "/reel/", "/videos/", "/watch", "/story.php", "/permalink.php", "/photo.php"
+        ))
+    except Exception:
+        return False
+
+
 def _resolve_facebook_share_url(url: str, opts: Dict[str, Any]) -> str:
-    """Resolve Facebook share links while minimizing residential-proxy traffic."""
+    """Resolve Facebook share links before yt-dlp extraction.
+
+    Facebook currently redirects many /share/v/ and /share/r/ links to reel/video
+    pages, but the exact redirect can vary by client/network. Resolve the share
+    page explicitly first, then let yt-dlp handle the resulting media URL.
+    """
     try:
         parsed = urlparse(url)
         host = parsed.netloc.lower()
@@ -228,41 +285,185 @@ def _resolve_facebook_share_url(url: str, opts: Dict[str, Any]) -> str:
         if cached and time.monotonic() - cached[0] <= _INFO_CACHE_TTL_SECONDS:
             return cached[1]
 
-        base_kwargs = {
-            "headers": {"User-Agent": settings.CUSTOM_USER_AGENT},
-            "timeout": min(settings.INFO_TIMEOUT_SECONDS, 15),
-            "allow_redirects": True,
+        headers = {
+            "User-Agent": settings.CUSTOM_USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
         }
 
-        # A share-link redirect is small and often works directly. Try direct
-        # first so resolving the URL does not consume residential bandwidth.
-        try:
-            response = requests.get(url, **base_kwargs)
-            final_url = response.url or url
-            final = urlparse(final_url)
-            final_host = final.netloc.lower()
-            if final_host.endswith("facebook.com") or final_host.endswith("fb.watch"):
-                _SHARE_URL_CACHE[url] = (time.monotonic(), final_url)
+        def request_and_resolve(target_url: str, proxy: Optional[str] = None) -> Optional[str]:
+            kwargs = {
+                "headers": headers,
+                "timeout": min(settings.INFO_TIMEOUT_SECONDS, 15),
+                "allow_redirects": True,
+            }
+            if proxy:
+                kwargs["proxies"] = {"http": proxy, "https": proxy}
+            response = requests.get(target_url, **kwargs)
+            final_url = response.url or target_url
+            if _is_facebook_media_page(final_url):
                 return final_url
+            return _facebook_url_from_html(response.text)
+
+        # Direct resolution is preferred: the redirect is tiny and avoids
+        # spending residential bandwidth when Facebook allows it.
+        try:
+            resolved = request_and_resolve(url)
+            if resolved:
+                _SHARE_URL_CACHE[url] = (time.monotonic(), resolved)
+                return resolved
         except Exception:
             pass
 
-        # Only use Webshare for the redirect if direct resolution failed.
+        # Facebook sometimes serves different redirect HTML to the mobile
+        # hostname. Try it before consuming residential proxy bandwidth.
+        for mobile_host in ("m.facebook.com", "mbasic.facebook.com"):
+            try:
+                mobile_url = urlunparse(("https", mobile_host, parsed.path, parsed.params, parsed.query, ""))
+                resolved = request_and_resolve(mobile_url)
+                if resolved:
+                    _SHARE_URL_CACHE[url] = (time.monotonic(), resolved)
+                    return resolved
+            except Exception:
+                continue
+
+        # Last resort: resolve the small share page through Webshare.
         proxy = opts.get("proxy")
         if proxy:
-            proxy_kwargs = dict(base_kwargs)
-            proxy_kwargs["proxies"] = {"http": proxy, "https": proxy}
-            response = requests.get(url, **proxy_kwargs)
-            final_url = response.url or url
-            final = urlparse(final_url)
-            final_host = final.netloc.lower()
-            if final_host.endswith("facebook.com") or final_host.endswith("fb.watch"):
-                _SHARE_URL_CACHE[url] = (time.monotonic(), final_url)
-                return final_url
+            try:
+                resolved = request_and_resolve(url, proxy=proxy)
+                if resolved:
+                    _SHARE_URL_CACHE[url] = (time.monotonic(), resolved)
+                    return resolved
+            except Exception:
+                pass
     except Exception:
         pass
+
     return url
 
+
+def _resolve_pinterest_short_url(url: str, opts: Dict[str, Any]) -> Tuple[str, Optional[str]]:
+    """Resolve pin.it links and return (resolved_url, fetched_html)."""
+    try:
+        parsed = urlparse(url)
+        if parsed.netloc.lower() != "pin.it":
+            return url, None
+
+        headers = {
+            "User-Agent": settings.CUSTOM_USER_AGENT,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
+        }
+        kwargs = {
+            "headers": headers,
+            "timeout": min(settings.INFO_TIMEOUT_SECONDS, 15),
+            "allow_redirects": True,
+        }
+        if opts.get("proxy"):
+            kwargs["proxies"] = {"http": opts["proxy"], "https": opts["proxy"]}
+
+        response = requests.get(url, **kwargs)
+        final_url = response.url or url
+        page = response.text or ""
+
+        candidates = [final_url]
+        patterns = [
+            r'<link[^>]+rel=["\']canonical["\'][^>]+href=["\']([^"\']+)["\']',
+            r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:url["\']',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, page, re.IGNORECASE)
+            if match:
+                candidates.append(html.unescape(match.group(1)))
+
+        for candidate in candidates:
+            if not candidate:
+                continue
+            candidate = candidate.replace("\\/", "/")
+            parsed_candidate = urlparse(candidate)
+            if "pinterest." in parsed_candidate.netloc.lower() and "/pin/" in parsed_candidate.path.lower():
+                return candidate, page
+
+        return final_url, page
+    except Exception as exc:
+        logging.getLogger(__name__).debug("Pinterest short-link resolution failed: %r", exc)
+        return url, None
+
+
+def _pinterest_html_fallback(url: str, opts: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Extract a public Pinterest video directly from pin-page HTML when the API is blocked."""
+    try:
+        resolved_url, page = _resolve_pinterest_short_url(url, opts)
+        if not page:
+            return None
+
+        page = html.unescape(page).replace("\\/", "/")
+        video_urls = []
+
+        meta_patterns = [
+            r'<meta[^>]+(?:property|name)=["\'](?:og:video(?::secure_url)?|twitter:player:stream)["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\'](?:og:video(?::secure_url)?|twitter:player:stream)["\']',
+        ]
+        for pattern in meta_patterns:
+            for match in re.finditer(pattern, page, re.IGNORECASE):
+                candidate = match.group(1)
+                if candidate.startswith(("http://", "https://")) and candidate not in video_urls:
+                    video_urls.append(candidate)
+
+        media_pattern = r'https?://[^"\'<>\s]+?\.(?:mp4|m3u8)(?:\?[^"\'<>\s]*)?'
+        for match in re.finditer(media_pattern, page, re.IGNORECASE):
+            candidate = match.group(0).replace("\\u0026", "&")
+            if candidate not in video_urls:
+                video_urls.append(candidate)
+
+        if not video_urls:
+            return None
+
+        title = None
+        title_match = re.search(
+            r'<meta[^>]+(?:property|name)=["\'](?:og:title|twitter:title)["\'][^>]+content=["\']([^"\']*)["\']',
+            page, re.IGNORECASE,
+        )
+        if title_match:
+            title = html.unescape(title_match.group(1)).strip()
+        if not title:
+            title_match = re.search(r"<title[^>]*>(.*?)</title>", page, re.IGNORECASE | re.DOTALL)
+            if title_match:
+                title = html.unescape(re.sub(r"\s+", " ", title_match.group(1))).strip()
+
+        pin_match = re.search(r"/pin/(?:[\w-]+--)?(\d+)", resolved_url or url, re.IGNORECASE)
+        video_id = pin_match.group(1) if pin_match else re.sub(r"\W+", "_", url.rsplit("/", 1)[-1]).strip("_")[:80]
+        formats = []
+        for index, media_url in enumerate(video_urls):
+            if ".m3u8" in media_url.lower():
+                formats.append({
+                    "format_id": f"pinterest-hls-{index}",
+                    "url": media_url,
+                    "ext": "mp4",
+                    "protocol": "m3u8_native",
+                })
+            else:
+                formats.append({
+                    "format_id": f"pinterest-cdn-{index}",
+                    "url": media_url,
+                    "ext": "mp4",
+                })
+
+        return {
+            "id": video_id,
+            "title": title or "Pinterest Video",
+            "formats": formats,
+            "webpage_url": resolved_url or url,
+            "extractor_key": "Pinterest",
+            "extractor": "Pinterest",
+        }
+    except Exception as exc:
+        logging.getLogger(__name__).debug("Pinterest HTML fallback failed: %r", exc)
+        return None
 
 def _extract_info_with_social_fallback(url: str, detected_platform: Optional[str], opts: Dict[str, Any], download: bool = False):
     """Try browser impersonation first, then a plain HTTP path."""
@@ -287,175 +488,8 @@ def _extract_info_with_social_fallback(url: str, detected_platform: Optional[str
         except Exception as exc:
             last_error = exc
 
-    # Facebook's native extractor is currently prone to `Cannot parse data`
-    # on public share/reel URLs even on recent yt-dlp builds. Try yt-dlp's
-    # generic extractor as a fallback. The generic extractor can follow the
-    # share redirect and read the public page's embedded media metadata
-    # without invoking the failing Facebook parser again.
-    if (detected_platform or "").lower() == "facebook":
-        generic_opts = dict(opts)
-        generic_opts.pop("impersonate", None)
-        generic_opts["force_generic_extractor"] = True
-        generic_opts["allowed_extractors"] = ["generic"]
-        try:
-            with yt_dlp.YoutubeDL(generic_opts) as ydl:
-                generic_info = ydl.extract_info(url, download=download)
-            if generic_info:
-                return generic_info
-        except Exception as exc:
-            last_error = exc
-
-        # yt-dlp's generic extractor still hands Facebook redirects back to
-        # the broken native Facebook extractor. As a final public-content
-        # fallback, parse direct MP4 URLs from Facebook's HTML instead.
-        try:
-            html_info = _extract_facebook_html_media(url, opts)
-            if html_info:
-                return html_info
-        except Exception as exc:
-            last_error = exc
-
     raise last_error
 
-
-
-
-def _extract_facebook_html_media(url: str, opts: Dict[str, Any]):
-    """Extract public Facebook video URLs directly from the rendered HTML."""
-    parsed = urlparse(url)
-    if not parsed.netloc.lower().endswith("facebook.com"):
-        return None
-
-    headers = {
-        "User-Agent": settings.CUSTOM_USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.8",
-    }
-    request_kwargs = {
-        "headers": headers,
-        "timeout": min(settings.INFO_TIMEOUT_SECONDS, 15),
-        "allow_redirects": True,
-    }
-
-    response = None
-    try:
-        response = requests.get(url, **request_kwargs)
-        if response.status_code >= 400:
-            response = None
-    except Exception:
-        response = None
-
-    if response is None and opts.get("proxy"):
-        try:
-            proxy = opts["proxy"]
-            request_kwargs["proxies"] = {"http": proxy, "https": proxy}
-            response = requests.get(url, **request_kwargs)
-        except Exception:
-            response = None
-
-    if response is None or not response.text:
-        return None
-
-    from html import unescape
-    import re
-    from urllib.parse import unquote
-
-    normalized = unescape(response.text)
-    normalized = normalized.replace("\\/", "/")
-    normalized = normalized.replace("\\u0025", "%").replace("\\u0026", "&")
-    normalized = normalized.replace("\\u003D", "=").replace("\\u003d", "=")
-    normalized = normalized.replace("\\u002F", "/").replace("\\u002f", "/")
-    normalized = unquote(normalized)
-
-    candidates = []
-
-    field_patterns = [
-        r'"playable_url_quality_hd"\s*:\s*"([^"]+)"',
-        r'"playable_url"\s*:\s*"([^"]+)"',
-        r'"hd_src"\s*:\s*"([^"]+)"',
-        r'"sd_src"\s*:\s*"([^"]+)"',
-        r'"browser_native_hd_url"\s*:\s*"([^"]+)"',
-        r'"browser_native_sd_url"\s*:\s*"([^"]+)"',
-    ]
-    for pattern in field_patterns:
-        candidates.extend(re.findall(pattern, normalized))
-
-    meta_patterns = [
-        r"<meta[^>]+property=['\"]og:video(?::secure_url|:url)?['\"][^>]+content=['\"]([^'\"]+)['\"]",
-        r"<meta[^>]+content=['\"]([^'\"]+)['\"][^>]+property=['\"]og:video(?::secure_url|:url)?['\"]",
-    ]
-    for pattern in meta_patterns:
-        candidates.extend(re.findall(pattern, normalized, flags=re.IGNORECASE))
-
-    candidates.extend(re.findall(
-        r"https?://[^\"'\s<>]+(?:fbcdn\.net|facebook\.com)[^\"'\s<>]+?\.mp4(?:\?[^\"'\s<>]*)?",
-        normalized,
-        flags=re.IGNORECASE,
-    ))
-
-    cleaned = []
-    seen = set()
-    for candidate in candidates:
-        candidate = candidate.replace('\\"', '"').strip()
-        if candidate.startswith("http") and ".mp4" in candidate.lower() and candidate not in seen:
-            seen.add(candidate)
-            cleaned.append(candidate)
-
-    if not cleaned:
-        return None
-
-    def _score(u):
-        low = u.lower()
-        return (
-            2 if "hd" in low else 0,
-            1 if "1080" in low or "720" in low else 0,
-        )
-
-    cleaned.sort(key=_score, reverse=True)
-
-    title_match = re.search(
-        r"<meta[^>]+property=['\"]og:title['\"][^>]+content=['\"]([^'\"]+)['\"]",
-        normalized,
-        flags=re.IGNORECASE,
-    )
-    if not title_match:
-        title_match = re.search(
-            r"<title[^>]*>(.*?)</title>",
-            normalized,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-    title = unescape(title_match.group(1)).strip() if title_match else "Facebook Video"
-
-    thumb_match = re.search(
-        r"<meta[^>]+property=['\"]og:image['\"][^>]+content=['\"]([^'\"]+)['\"]",
-        normalized,
-        flags=re.IGNORECASE,
-    )
-    thumbnail = thumb_match.group(1).strip() if thumb_match else None
-
-    formats = []
-    for index, media_url in enumerate(cleaned[:4], start=1):
-        formats.append({
-            "format_id": f"facebook-html-{index}",
-            "url": media_url,
-            "ext": "mp4",
-            "height": None,
-            "width": None,
-            "vcodec": "unknown",
-            "acodec": "unknown",
-        })
-
-    video_id_match = re.search(r"(?:/videos/|/reel/|[?&]v=)(\d+)", response.url or url)
-    return {
-        "id": video_id_match.group(1) if video_id_match else None,
-        "title": title,
-        "thumbnail": thumbnail,
-        "webpage_url": response.url or url,
-        "extractor_key": "Facebook",
-        "formats": formats,
-        "url": cleaned[0],
-        "_facebook_html_fallback": True,
-    }
 
 def extract_media_info(url: str, detected_platform: Optional[str] = None) -> Dict[str, Any]:
     """
@@ -466,14 +500,21 @@ def extract_media_info(url: str, detected_platform: Optional[str] = None) -> Dic
     """
     if (detected_platform or "").lower() == "facebook":
         url = _resolve_facebook_share_url(url, _get_base_ydl_opts(platform=detected_platform))
+    is_pinterest = (detected_platform or "").lower() == "pinterest" or "pin.it/" in url.lower() or "pinterest." in url.lower()
     is_youtube = (detected_platform or "").lower() == "youtube" or "youtube.com" in url.lower() or "youtu.be/" in url.lower()
     opts = _get_base_ydl_opts(is_youtube=is_youtube, platform=detected_platform)
     opts["socket_timeout"] = settings.INFO_TIMEOUT_SECONDS
 
     try:
         info = _get_cached_info(url, detected_platform)
+        if info is None and is_pinterest:
+            resolved_url, _ = _resolve_pinterest_short_url(url, opts)
+            if resolved_url != url:
+                url = resolved_url
+            info = _pinterest_html_fallback(url, opts)
         if info is None:
             info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
+        if info is not None:
             _cache_info(url, detected_platform, info)
     except Exception as e:
         raise _classify_ytdlp_error(e)
@@ -554,6 +595,41 @@ def extract_media_info(url: str, detected_platform: Optional[str] = None) -> Dic
     }
 
 
+def _resolve_download_info(url: str, detected_platform: Optional[str], opts: Dict[str, Any], info=None):
+    """Resolve yt-dlp wrapper results into a final playable video info dict."""
+    current = info
+    for _ in range(4):
+        if not isinstance(current, dict):
+            break
+        result_type = current.get("_type", "video")
+        if result_type == "video":
+            return current
+
+        # Moj share/video pages can currently be returned by yt-dlp's Generic
+        # extractor as a one-entry playlist. The entry is the actual playable
+        # result, so unwrap it before process_ie_result() rejects the wrapper.
+        if result_type == "playlist" and (detected_platform or "").lower() == "moj":
+            entries = [entry for entry in (current.get("entries") or []) if entry]
+            if entries:
+                current = entries[0]
+                continue
+
+        nested_url = current.get("url")
+        if result_type not in {"url", "url_transparent"} or not nested_url:
+            break
+
+        current_url = nested_url
+        nested_opts = dict(opts)
+        nested_opts.pop("format", None)
+        with yt_dlp.YoutubeDL(nested_opts) as ydl:
+            current = ydl.extract_info(current_url, download=False)
+
+    if isinstance(current, dict) and current.get("_type", "video") == "video":
+        return current
+    raise AssertionError(
+        f"yt-dlp returned non-video result type: {current.get('_type') if isinstance(current, dict) else type(current).__name__}"
+    )
+
 def download_media_file(
     url: str,
     requested_quality: Optional[str] = None,
@@ -576,6 +652,7 @@ def download_media_file(
 
     if (detected_platform or "").lower() == "facebook":
         url = _resolve_facebook_share_url(url, _get_base_ydl_opts(platform=detected_platform))
+    is_pinterest = (detected_platform or "").lower() == "pinterest" or "pin.it/" in url.lower() or "pinterest." in url.lower()
     is_youtube = (detected_platform or "").lower() == "youtube" or "youtube.com" in url.lower() or "youtu.be/" in url.lower()
     opts = _get_base_ydl_opts(is_youtube=is_youtube, platform=detected_platform)
     opts.update({
@@ -604,26 +681,65 @@ def download_media_file(
         # residential proxy on the protected platform request path without
         # forcing the large media payload through the proxy.
         info = _get_cached_info(url, detected_platform)
+        if info is None and is_pinterest:
+            resolved_url, _ = _resolve_pinterest_short_url(url, opts)
+            if resolved_url != url:
+                url = resolved_url
+            info = _pinterest_html_fallback(url, opts)
         if info is None:
             info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
+        if info is not None:
             _cache_info(url, detected_platform, info)
+
+        # /api/info can legitimately return a transparent URL result from yt-dlp.
+        # process_ie_result() expects a final video result, so resolve that chain
+        # explicitly before attempting the file download.
+        info = _resolve_download_info(url, detected_platform, opts, info)
 
         downloaded_direct = False
         proxy_url = opts.get("proxy")
+
+        # yt-dlp's Facebook extractor may use browser impersonation during page
+        # extraction, but the current yt-dlp/curl_cffi combination can assert
+        # when a plain string target ("chrome") is passed to YoutubeDL() for
+        # process_ie_result(). The media info already contains the final media
+        # formats, so do not pass the impersonation option into the actual
+        # media downloader. This avoids the AssertionError seen in Render.
+        media_opts = dict(opts)
+        media_opts.pop("impersonate", None)
+
         if proxy_url and not settings.WEBSHARE_PROXY_MEDIA:
             # yt-dlp supports an empty proxy value for a direct connection.
             # Reuse the already-extracted info so we do not make a second
             # platform-page request through the residential proxy.
-            direct_opts = dict(opts)
+            direct_opts = dict(media_opts)
             direct_opts["proxy"] = ""
             try:
                 with yt_dlp.YoutubeDL(direct_opts) as ydl:
                     ydl.process_ie_result(info, download=True)
                 downloaded_direct = True
-            except Exception:
-                # Some signed/geo-restricted media URLs require the same proxy
-                # used during extraction. Fall back to the reliable proxy path.
-                downloaded_direct = False
+            except Exception as direct_exc:
+                # Some Facebook signed media URLs cannot be replayed from the
+                # cached extraction result. Re-run yt-dlp on the resolved media
+                # page directly, while keeping the media request off Webshare.
+                try:
+                    refreshed = _extract_info_with_social_fallback(url, detected_platform, direct_opts, download=False)
+                    refreshed = _resolve_download_info(url, detected_platform, direct_opts, refreshed)
+                    with yt_dlp.YoutubeDL(direct_opts) as ydl:
+                        ydl.process_ie_result(refreshed, download=True)
+                    downloaded_direct = True
+                except Exception as direct_download_exc:
+                    logging.getLogger(__name__).warning(
+                        "Direct media download failed; retrying with configured proxy: %r / %r; info_type=%r extractor=%r formats=%d",
+                        direct_exc, direct_download_exc,
+                        info.get("_type") if isinstance(info, dict) else None,
+                        info.get("extractor_key") if isinstance(info, dict) else None,
+                        len(info.get("formats", [])) if isinstance(info, dict) else 0,
+                    )
+                    logging.getLogger(__name__).warning(
+                        "Direct media download traceback:\n%s", traceback.format_exc()
+                    )
+                    downloaded_direct = False
 
         if not downloaded_direct:
             # Reuse the already-extracted info instead of calling extract_info()
@@ -631,18 +747,29 @@ def download_media_file(
             # this downloads the same selected media through Webshare without
             # repeating the platform-page/API extraction request.
             try:
-                with yt_dlp.YoutubeDL(opts) as ydl:
+                with yt_dlp.YoutubeDL(media_opts) as ydl:
                     ydl.process_ie_result(info, download=True)
             except Exception:
                 # Cached signed URLs can expire. Only in that case re-extract
                 # through Webshare and retry, preserving bandwidth savings for
                 # the normal path.
                 info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
+                info = _resolve_download_info(url, detected_platform, opts, info)
                 _cache_info(url, detected_platform, info)
-                with yt_dlp.YoutubeDL(opts) as ydl:
+                with yt_dlp.YoutubeDL(media_opts) as ydl:
                     ydl.process_ie_result(info, download=True)
     except Exception as e:
-        # If download failed, clean up the temporary directory immediately
+        # If download failed, clean up the temporary directory immediately.
+        logging.getLogger(__name__).warning(
+            "Media download exception type=%s repr=%r info_type=%r extractor=%r formats=%d",
+            e.__class__.__name__, e,
+            info.get("_type") if isinstance(info, dict) else None,
+            info.get("extractor_key") if isinstance(info, dict) else None,
+            len(info.get("formats", [])) if isinstance(info, dict) else 0,
+        )
+        logging.getLogger(__name__).warning(
+            "Media download traceback:\n%s", traceback.format_exc()
+        )
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise _classify_ytdlp_error(e)
 
