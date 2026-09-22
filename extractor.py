@@ -596,22 +596,34 @@ def extract_media_info(url: str, detected_platform: Optional[str] = None) -> Dic
 
 
 def _resolve_download_info(url: str, detected_platform: Optional[str], opts: Dict[str, Any], info=None):
-    """Resolve yt-dlp transparent URL results into a final video info dict."""
+    """Resolve yt-dlp wrapper results into a final playable video info dict."""
     current = info
-    for _ in range(3):
+    for _ in range(4):
         if not isinstance(current, dict):
             break
         result_type = current.get("_type", "video")
         if result_type == "video":
             return current
+
+        # Moj share/video pages can currently be returned by yt-dlp's Generic
+        # extractor as a one-entry playlist. The entry is the actual playable
+        # result, so unwrap it before process_ie_result() rejects the wrapper.
+        if result_type == "playlist" and (detected_platform or "").lower() == "moj":
+            entries = [entry for entry in (current.get("entries") or []) if entry]
+            if entries:
+                current = entries[0]
+                continue
+
         nested_url = current.get("url")
         if result_type not in {"url", "url_transparent"} or not nested_url:
             break
+
         current_url = nested_url
         nested_opts = dict(opts)
         nested_opts.pop("format", None)
         with yt_dlp.YoutubeDL(nested_opts) as ydl:
             current = ydl.extract_info(current_url, download=False)
+
     if isinstance(current, dict) and current.get("_type", "video") == "video":
         return current
     raise AssertionError(
