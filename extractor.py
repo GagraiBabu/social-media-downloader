@@ -111,9 +111,9 @@ def _get_base_ydl_opts(is_youtube: bool = False, platform: Optional[str] = None)
         "noplaylist": True,
         "nocheckcertificate": False,
         "user_agent": settings.CUSTOM_USER_AGENT,
-        # Route yt-dlp HTTP/HTTPS traffic through Webshare when enabled.
+        # Route yt-dlp HTTP/HTTPS traffic through Decodo when enabled.
         # The proxy URL is built from Render environment variables and is never returned to clients.
-        **({"proxy": settings.WEBSHARE_PROXY_URL_BUILT} if settings.WEBSHARE_PROXY_URL_BUILT else {}),
+        **({"proxy": settings.DECODO_PROXY_URL_BUILT} if settings.DECODO_PROXY_URL_BUILT else {}),
         "socket_timeout": settings.INFO_TIMEOUT_SECONDS,
         "max_filesize": settings.MAX_FILE_SIZE_BYTES,
         "prefer_ffmpeg": True,
@@ -198,16 +198,16 @@ def _classify_ytdlp_error(error: Exception) -> MediaExtractionError:
         or "unable to connect to proxy" in err_str
     ):
         return MediaExtractionError(
-            "Webshare rejected the proxy connection parameters (HTTP 400). "
-            "The backend now uses the Webshare Endpoint Generator credentials exactly as configured. "
-            "Check that WEBSHARE_PROXY_URL contains the exact Endpoint Generator output, "
-            "or that WEBSHARE_USERNAME/WEBSHARE_PASSWORD match it exactly.",
+            "Decodo rejected the proxy connection parameters (HTTP 400). "
+            "The backend now uses the Decodo Endpoint Generator credentials exactly as configured. "
+            "Check that DECODO_PROXY_URL contains the exact Endpoint Generator output, "
+            "or that DECODO_USERNAME/DECODO_PASSWORD match it exactly.",
             status_code=502
         )
 
     if "429" in err_str or "too many requests" in err_str:
         return MediaExtractionError(
-            "The platform is rate-limiting the current network path (HTTP 429). Webshare proxy mode is active; please retry after the temporary rate limit clears.",
+            "The platform is rate-limiting the current network path (HTTP 429). Decodo proxy mode is active; please retry after the temporary rate limit clears.",
             status_code=429
         )
 
@@ -328,7 +328,7 @@ def _resolve_facebook_share_url(url: str, opts: Dict[str, Any]) -> str:
             except Exception:
                 continue
 
-        # Last resort: resolve the small share page through Webshare.
+        # Last resort: resolve the small share page through Decodo.
         proxy = opts.get("proxy")
         if proxy:
             try:
@@ -677,7 +677,7 @@ def download_media_file(
     })
 
     try:
-        # First extract metadata/format URLs through Webshare. This keeps the
+        # First extract metadata/format URLs through Decodo. This keeps the
         # residential proxy on the protected platform request path without
         # forcing the large media payload through the proxy.
         info = _get_cached_info(url, detected_platform)
@@ -769,7 +769,7 @@ def download_media_file(
                 )
 
             vk_attempts = []
-            if proxy_url and not settings.WEBSHARE_PROXY_MEDIA:
+            if proxy_url and not settings.DECODO_PROXY_MEDIA:
                 vk_direct_opts = dict(opts)
                 vk_direct_opts["proxy"] = ""
                 vk_direct_opts["format"] = vk_format_selector
@@ -804,7 +804,7 @@ def download_media_file(
         media_opts = dict(opts)
         media_opts.pop("impersonate", None)
 
-        if proxy_url and not settings.WEBSHARE_PROXY_MEDIA:
+        if proxy_url and not settings.DECODO_PROXY_MEDIA:
             # yt-dlp supports an empty proxy value for a direct connection.
             # Reuse the already-extracted info so we do not make a second
             # platform-page request through the residential proxy.
@@ -817,7 +817,7 @@ def download_media_file(
             except Exception as direct_exc:
                 # Some Facebook signed media URLs cannot be replayed from the
                 # cached extraction result. Re-run yt-dlp on the resolved media
-                # page directly, while keeping the media request off Webshare.
+                # page directly, while keeping the media request off Decodo.
                 try:
                     refreshed = _extract_info_with_social_fallback(url, detected_platform, direct_opts, download=False)
                     refreshed = _resolve_download_info(url, detected_platform, direct_opts, refreshed)
@@ -839,15 +839,15 @@ def download_media_file(
 
         if not downloaded_direct:
             # Reuse the already-extracted info instead of calling extract_info()
-            # again through Webshare. If the direct media URL needs the proxy,
-            # this downloads the same selected media through Webshare without
+            # again through Decodo. If the direct media URL needs the proxy,
+            # this downloads the same selected media through Decodo without
             # repeating the platform-page/API extraction request.
             try:
                 with yt_dlp.YoutubeDL(media_opts) as ydl:
                     ydl.process_ie_result(info, download=True)
             except Exception:
                 # Cached signed URLs can expire. Only in that case re-extract
-                # through Webshare and retry, preserving bandwidth savings for
+                # through Decodo and retry, preserving bandwidth savings for
                 # the normal path.
                 info = _extract_info_with_social_fallback(url, detected_platform, opts, download=False)
                 info = _resolve_download_info(url, detected_platform, opts, info)
