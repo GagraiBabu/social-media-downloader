@@ -7,24 +7,24 @@ services:
     healthCheckPath: /health
     autoDeploy: true
     envVars:
-      # Webshare Residential Proxy
-      - key: WEBSHARE_PROXY_ENABLED
+      # Decodo Residential Proxy
+      - key: DECODO_PROXY_ENABLED
         value: "true"
-      - key: WEBSHARE_HOST
-        value: p.webshare.io
-      - key: WEBSHARE_PORT
-        value: "80"
-      - key: WEBSHARE_COUNTRY
+      - key: DECODO_HOST
+        value: dc.decodo.com
+      - key: DECODO_PORT
+        value: "10001"
+      - key: DECODO_COUNTRY
         value: ""
-      - key: WEBSHARE_SESSION
+      - key: DECODO_SESSION
         value: ""
-      - key: WEBSHARE_ROTATE
+      - key: DECODO_ROTATE
         value: "true"
-      - key: WEBSHARE_PROXY_MEDIA
+      - key: DECODO_PROXY_MEDIA
         value: "false"
-      - key: WEBSHARE_USERNAME
+      - key: DECODO_USERNAME
         sync: false
-      - key: WEBSHARE_PASSWORD
+      - key: DECODO_PASSWORD
         sync: false
 
       # App tuning
