@@ -134,7 +134,7 @@ class VideoInfoResponse(BaseModel):
 class DownloadRequest(BaseModel):
     url: str = Field(..., description="The media URL to download", min_length=4, max_length=2048)
     quality: Optional[str] = Field(
-        default="1080p",
+        default="480p",
         description="Target video quality (e.g., '1080p', '720p', '480p', '360p', 'audio_only', or specific format_id)"
     )
 
@@ -261,7 +261,7 @@ async def get_video_info_endpoint(payload: InfoRequest):
 async def download_video_endpoint(payload: DownloadRequest, background_tasks: BackgroundTasks):
     """
     Extracts and downloads media adhering to:
-    - Default quality: 1080p when available.
+    - Default quality: 480p when available.
     - If 1080p unavailable: best available quality below it (never upscaled).
     - Other requested quality if provided ('720p', '480p', '360p', 'audio_only', format_id).
     - Isolated temporary file storage.
@@ -277,7 +277,7 @@ async def download_video_endpoint(payload: DownloadRequest, background_tasks: Ba
         filepath, clean_filename, temp_dir = await run_in_threadpool(
             download_media_file,
             norm_url,
-            payload.quality or "1080p",
+            payload.quality or "480p",
             platform,
         )
 
