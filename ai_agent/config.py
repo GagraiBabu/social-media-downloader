@@ -27,7 +27,9 @@ class Settings:
         '{"youtube":"https://youtu.be/CMrxWnQxT94?si=qYdlitYqAMvw9D7L","instagram":"https://www.instagram.com/reel/DcbIMbLP35E/?stkn=cDRuaTI2ZGlkYzE2","facebook":"https://www.facebook.com/share/v/1896iFuYNG/","pinterest":"https://in.pinterest.com/pin/1-video--1008454541538180803/","moj":"https://mojapp.in/@95184416561/video/3935202957?referrer=WxtUYb-1buuaBh","tiktok":"https://www.tiktok.com/@scout2015/video/6718335390845095173","x_twitter":"https://x.com/stillmomentss/status/2102199058979000447?s=20","reddit":"https://www.reddit.com/r/cringereels/s/re4lh5qq3N","snapchat":"https://www.snapchat.com/spotlight/W7_EDlXWTBiXAEEniNoMPwAAYcXpzc2t0Znh1AaCMwrDiAaCMwrDHAAAAAQ?ref=web_spotlight","dailymotion":"https://www.dailymotion.com/video/xbbdewu","linkedin":"https://www.linkedin.com/posts/mamamia-com-au_could-you-have-wellbeing-burnout-activity-7250641346867126272-dGNc?utm_source=li_share&utm_content=feedcontent&utm_medium=g_mb_web&utm_campaign=copy"}',
     )
     AI_AGENT_DEEP_TESTS = os.getenv("AI_AGENT_DEEP_TESTS", "true").lower() in ("true", "1", "yes")
-    AI_AGENT_MAX_REPAIR_ATTEMPTS = max(5, min(15, int(os.getenv("AI_AGENT_MAX_REPAIR_ATTEMPTS", "15"))))
+    # Safety limit: at most 2 repair attempts per repair job. After the second
+    # failed attempt the agent stops and reports the failure for manual review.
+    AI_AGENT_MAX_REPAIR_ATTEMPTS = max(1, min(2, int(os.getenv("AI_AGENT_MAX_REPAIR_ATTEMPTS", "2"))))
     AI_AGENT_HEALTH_TIMEOUT_SECONDS = max(5, int(os.getenv("AI_AGENT_HEALTH_TIMEOUT_SECONDS", "30")))
     AI_AGENT_INFO_TEST_TIMEOUT_SECONDS = max(15, int(os.getenv("AI_AGENT_INFO_TEST_TIMEOUT_SECONDS", "60")))
     AI_AGENT_DOWNLOAD_TEST_TIMEOUT_SECONDS = max(30, int(os.getenv("AI_AGENT_DOWNLOAD_TEST_TIMEOUT_SECONDS", "240")))
